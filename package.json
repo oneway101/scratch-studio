@@ -1,0 +1,16 @@
+{
+  "name": "scratch-studio",
+  "version": "0.0.0",
+  "private": true,
+  "license": "GPL-3.0",
+  "description": "Scratch editor build, site bridge and grader for edu-platform",
+  "scripts": {
+    "vendor": "git clone --depth 1 https://github.com/TurboWarp/scratch-gui.git vendor/scratch-gui && cd vendor/scratch-gui && git apply ../../patches/scratch-gui.patch && CHROMEDRIVER_SKIP_DOWNLOAD=true npm ci",
+    "build": "cd vendor/scratch-gui && NODE_ENV=production webpack --config ../../webpack.config.js --bail",
+    "spike:serve": "node spike/serve.mjs",
+    "spike:check": "node spike/check.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1"
+  }
+}

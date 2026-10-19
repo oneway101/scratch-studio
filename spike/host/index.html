@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>scratch-studio 0단계 시험 페이지</title>
+<style>
+  body { margin: 0; font: 13px system-ui, sans-serif; display: flex; height: 100vh; }
+  aside { width: 300px; padding: 12px; box-sizing: border-box; overflow: auto; border-right: 1px solid #ddd; }
+  aside button { display: block; width: 100%; margin: 4px 0; padding: 6px; text-align: left; }
+  iframe { flex: 1; border: 0; }
+  pre { white-space: pre-wrap; word-break: break-all; font-size: 11px; background: #f6f6f6; padding: 8px; }
+</style>
+</head>
+<body>
+<aside>
+  <b>시험 페이지 (이 페이지의 출처: <span id="origin"></span>)</b>
+  <button onclick="host.request('init', {locale: 'ko', mode: 'edit'})">init: 한국어, 편집</button>
+  <button onclick="host.request('init', {locale: 'en', mode: 'edit'})">init: 영어, 편집</button>
+  <button onclick="host.request('setMode', {mode: 'player'})">setMode: 실행 전용</button>
+  <button onclick="host.request('setMode', {mode: 'view'})">setMode: 블록 보기</button>
+  <button onclick="host.request('setMode', {mode: 'edit'})">setMode: 편집</button>
+  <button onclick="host.exportAndKeep()">exportProject (보관)</button>
+  <button onclick="host.reload()">loadProject (보관한 것)</button>
+  <button onclick="host.capture()">captureStage</button>
+  <button onclick="host.request('grade', {checks: [{type: 'dynamic', renderer: true, actions: [{do: 'greenFlag'}, {do: 'keyPress', key: 'ArrowRight', durationMs: 200}, {do: 'wait', ms: 500}]}]})">grade (동적 1개)</button>
+  <button onclick="host.request('setSaveStatus', {status: 'saving'})">setSaveStatus: 저장 중</button>
+  <button onclick="host.request('setSaveStatus', {status: 'failed'})">setSaveStatus: 저장 실패</button>
+  <button onclick="host.request('setSaveStatus', {status: 'saved'})">setSaveStatus: 저장됨</button>
+  <img id="shot" style="width:100%;border:1px solid #ddd;display:none">
+  <pre id="log"></pre>
+</aside>
+<iframe id="editor"></iframe>
+<script>
+const params = new URLSearchParams(location.search);
+const EDITOR = params.get('editor') || 'http://localhost:8601';
+const frame = document.getElementById('editor');
+document.getElementById('origin').textContent = location.origin;
+const logEl = document.getElementById('log');
+const describe = v => JSON.stringify(v, (k, x) => x instanceof ArrayBuffer ? `ArrayBuffer(${x.byteLength})` : x);
+const host = window.host = {
+  events: [], pending: new Map(), seq: 0, kept: null, readyAt: null, startedAt: performance.now(),
+  log(line) { logEl.textContent = line + '\n' + logEl.textContent.slice(0, 4000); },
+  request(type, payload, transfer) {
+    const requestId = 'r' + (++host.seq);
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { host.pending.delete(requestId); reject(new Error('timeout: ' + type)); }, 20000);
+      host.pending.set(requestId, {resolve, reject, timer});
+      frame.contentWindow.postMessage({source: 'scratch-studio', version: params.get('version') ? Number(params.get('version')) : 1, type, requestId, payload}, EDITOR, transfer || []);
+    });
+  },
+  async exportAndKeep() { const r = await host.request('exportProject'); host.kept = r.sb3; return r.sb3.byteLength; },
+  async reload() { return host.request('loadProject', {sb3: host.kept.slice(0)}); },
+  async capture() {
+    const r = await host.request('captureStage');
+    const img = document.getElementById('shot');
+    img.src = URL.createObjectURL(new Blob([r.png], {type: 'image/png'}));
+    img.style.display = 'block';
+    return r.png.byteLength;
+  }
+};
+window.addEventListener('message', event => {
+  if (event.origin !== EDITOR) return;
+  const m = event.data;
+  if (!m || m.source !== 'scratch-studio') return;
+  host.log(`← ${m.type} ${describe(m.payload || {})}`);
+  if (m.type === 'ready') host.readyAt = performance.now() - host.startedAt;
+  const waiting = m.requestId && host.pending.get(m.requestId);
+  if (waiting) {
+    clearTimeout(waiting.timer);
+    host.pending.delete(m.requestId);
+    if (m.type === 'error') waiting.reject(new Error(m.payload.code + ': ' + m.payload.message));
+    else waiting.resolve(m.payload);
+  } else {
+    host.events.push({type: m.type, payload: m.payload});
+  }
+});
+frame.src = EDITOR + '/index.html';
+</script>
+</body>
+</html>

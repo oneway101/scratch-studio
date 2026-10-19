@@ -1,37 +1,56 @@
 # scratch-studio
 
-edu-platform의 스크래치 과목용 에디터다. TurboWarp scratch-gui를 빌드해 본 사이트의 iframe 안에서 띄우고, 본 사이트와는 `postMessage`로만 통신한다. 기획은 본 사이트 저장소의 `docs/scratch-studio/scratch-studio-spec.md`에 있다.
+스크래치 수업용 에디터다. TurboWarp scratch-gui를 빌드해 다른 사이트(이하 호스트 사이트)의 iframe 안에서 띄우고, 호스트 사이트와는 `postMessage`로만 통신한다. 에디터는 로그인, DB, 서버 통신이 없는 정적 앱이다.
 
-현재 0단계(에디터 검증)까지 진행했다. 결과는 [docs/spike.md](docs/spike.md)에 있다.
+현재 1단계(브리지)까지 진행했다. 0단계(에디터 검증) 결과는 [docs/spike.md](docs/spike.md)에 있다.
 
 ## 실행
 
 Node 24 이상이 필요하다.
 
 ```
-npm run vendor        # TurboWarp 소스를 받고 패치를 적용하고 의존성을 설치한다 (수 분)
-npm run build         # build/ 에 에디터를 만든다
-npm run spike:serve   # 8601 에디터, 8602 시험 페이지, 8603/8604 출처 검증용
+npm install                       # 이 저장소의 개발 도구 (TypeScript, Playwright)
+npm run vendor                    # TurboWarp 소스(기준 커밋)를 받고 패치를 적용하고 의존성을 설치한다 (수 분)
+npm run build                     # build/ 에 에디터를 만든다
+npm run serve                     # 8601 에디터, 8602 시험 페이지, 8603/8604 출처 검증용
 ```
 
 브라우저에서 http://localhost:8602 를 열면 시험 페이지의 버튼으로 메시지를 보내 볼 수 있다.
 
-자동 점검은 Playwright로 실행한다. 처음 한 번 의존성과 크로미움을 설치한다.
+점검은 두 가지다. 자동 점검은 빌드와 `npm run serve`가 떠 있어야 하고, 처음 한 번 크로미움을 설치한다.
 
 ```
-npm install
+npm run typecheck                 # editor/*.ts 타입 검사
 npx playwright install chromium
-npm run spike:check
+npm run check                     # 브리지 자동 점검. 결과와 화면 캡처는 test/out/
 ```
+
+## 메시지 규약
+
+호스트 사이트와 주고받는 메시지는 [editor/protocol.ts](editor/protocol.ts)에 정의되어 있다. 이 파일이 에디터와 호스트 사이트 사이의 유일한 계약이고, 호스트 사이트는 같은 정의를 따른다. 규약을 바꿀 때는 `VERSION`을 올린다.
+
+## 배포 설정
+
+에디터는 호스트 사이트와 다른 출처(서브도메인)에서 제공한다. 배포할 때 두 가지를 설정한다.
+
+| 설정 | 위치 | 값 |
+| --- | --- | --- |
+| 메시지를 주고받을 수 있는 출처 | 빌드할 때 환경 변수 `STUDIO_ALLOWED_ORIGINS` (쉼표로 구분) | 호스트 사이트의 출처. 예: `STUDIO_ALLOWED_ORIGINS=https://edu.example.com npm run build`. 지정하지 않으면 `http://localhost:8602` |
+| 임베드를 허용할 출처 | 호스팅의 HTTP 응답 헤더 | `Content-Security-Policy: frame-ancestors <호스트 사이트의 출처>`. HTML의 `<meta>`로는 동작하지 않는다. `dev/serve.mjs`의 8601 서버가 같은 헤더를 붙인다 |
 
 ## 구성
 
 | 경로 | 내용 |
 | --- | --- |
-| `editor/` | 에디터 진입점, 브리지, 메뉴 바의 저장 버튼, 0단계용 채점 실험 코드 |
+| `editor/protocol.ts` | 메시지 규약 (타입, 오류 코드, payload 검증, 요청 제한 시간) |
+| `editor/bridge.ts` | 에디터 쪽 메시지 처리 |
+| `editor/studio.jsx` | 에디터 진입점. 테마 고정, 번들되지 않은 확장 차단 |
+| `editor/save-status.jsx`, `editor/save-store.ts` | 메뉴 바의 저장 상태와 "저장하기" 버튼 |
+| `editor/index.ejs` | 에디터 HTML |
 | `patches/`, `PATCHES.md` | TurboWarp 소스에 적용하는 수정과 그 이유 |
 | `webpack.config.js` | TurboWarp의 웹팩 설정에 이 저장소의 진입점을 얹는다 |
-| `spike/` | 0단계 시험 페이지, 서버, 자동 점검 |
+| `dev/` | 시험 페이지와 로컬 서버 |
+| `test/` | 브리지 자동 점검 |
 | `vendor/` | TurboWarp scratch-gui (git에 넣지 않는다) |
 
 ## 라이선스

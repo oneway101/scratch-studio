@@ -1,17 +1,25 @@
 diff --git a/src/components/menu-bar/language-menu.jsx b/src/components/menu-bar/language-menu.jsx
-index ab9a39a..b7ad3d6 100644
+index ab9a39a..daba931 100644
 --- a/src/components/menu-bar/language-menu.jsx
 +++ b/src/components/menu-bar/language-menu.jsx
-@@ -92,6 +92,7 @@ class LanguageMenu extends React.PureComponent {
+@@ -15,6 +15,7 @@ import {selectLocale} from '../../reducers/locales.js';
+ import styles from './settings-menu.css';
+ 
+ import dropdownCaret from './dropdown-caret.svg';
++import {LOCALES as STUDIO_LOCALES} from '@studio/protocol';
+ 
+ class LanguageMenu extends React.PureComponent {
+     constructor (props) {
+@@ -92,6 +93,7 @@ class LanguageMenu extends React.PureComponent {
                  >
                      {
                          Object.keys(locales)
-+                            .filter(locale => !window.__studioLocales || window.__studioLocales.includes(locale))
++                            .filter(locale => STUDIO_LOCALES.includes(locale))
                              .map(locale => (
                                  <MenuItem
                                      key={locale}
 diff --git a/src/components/menu-bar/menu-bar.jsx b/src/components/menu-bar/menu-bar.jsx
-index 6caddb5..245eb9b 100644
+index 6caddb5..57705b6 100644
 --- a/src/components/menu-bar/menu-bar.jsx
 +++ b/src/components/menu-bar/menu-bar.jsx
 @@ -32,6 +32,7 @@ import FramerateChanger from '../../containers/tw-framerate-changer.jsx';
@@ -22,7 +30,74 @@ index 6caddb5..245eb9b 100644
  import TWNews from './tw-news.jsx';
  
  import {openTipsLibrary, openSettingsModal, openRestorePointModal} from '../../reducers/modals';
-@@ -1035,9 +1036,7 @@ class MenuBar extends React.Component {
+@@ -830,15 +831,6 @@ class MenuBar extends React.Component {
+                                         </MenuItem>
+                                     )}</CloudVariablesToggler>
+                                 </MenuSection>
+-                                <MenuSection>
+-                                    <MenuItem onClick={this.props.onClickSettingsModal}>
+-                                        <FormattedMessage
+-                                            defaultMessage="Advanced Settings"
+-                                            description="Menu bar item for advanced settings"
+-                                            id="tw.menuBar.moreSettings"
+-                                        />
+-                                    </MenuItem>
+-                                </MenuSection>
+                             </MenuBarMenu>
+                         </MenuLabel>
+                         {this.props.isTotallyNormal && (
+@@ -905,26 +897,6 @@ class MenuBar extends React.Component {
+                                 </span>
+                             </div>
+                         )}
+-                        {this.props.onClickSettingsModal && (
+-                            <div
+-                                className={classNames(styles.menuBarItem, styles.hoverable)}
+-                                onClick={this.props.onClickSettingsModal}
+-                            >
+-                                <img
+-                                    src={advancedIcon}
+-                                    draggable={false}
+-                                    width={20}
+-                                    height={20}
+-                                />
+-                                <span className={styles.collapsibleLabel}>
+-                                    <FormattedMessage
+-                                        defaultMessage="Advanced"
+-                                        description="Button to open advanced settings menu"
+-                                        id="tw.menuBar.advanced"
+-                                    />
+-                                </span>
+-                            </div>
+-                        )}
+                     </div>
+ 
+                     <Divider className={styles.divider} />
+@@ -1011,33 +983,10 @@ class MenuBar extends React.Component {
+                             />
+                         ) : []))}
+                     </div>
+-                    {/* tw: add a feedback button */}
+-                    <div className={styles.menuBarItem}>
+-                        <a
+-                            className={styles.feedbackLink}
+-                            href="https://scratch.mit.edu/users/GarboMuffin/#comments"
+-                            rel="noopener noreferrer"
+-                            target="_blank"
+-                        >
+-                            {/* todo: icon */}
+-                            <Button className={styles.feedbackButton}>
+-                                <FormattedMessage
+-                                    defaultMessage="{APP_NAME} Feedback"
+-                                    description="Button to give feedback in the menu bar"
+-                                    id="tw.feedbackButton"
+-                                    values={{
+-                                        APP_NAME
+-                                    }}
+-                                />
+-                            </Button>
+-                        </a>
+-                    </div>
                  </div>
  
                  <div className={styles.accountInfoGroup}>
@@ -33,3 +108,39 @@ index 6caddb5..245eb9b 100644
                  </div>
  
                  {aboutButton}
+diff --git a/src/containers/extension-library.jsx b/src/containers/extension-library.jsx
+index 99f170d..b10b661 100644
+--- a/src/containers/extension-library.jsx
++++ b/src/containers/extension-library.jsx
+@@ -15,6 +15,9 @@ import extensionTags from '../lib/libraries/tw-extension-tags';
+ import LibraryComponent from '../components/library/library.jsx';
+ import extensionIcon from '../components/action-menu/icon--sprite.svg';
+ 
++// scratch-studio: only extensions bundled with the editor. No gallery, no custom extensions.
++const STUDIO_BUNDLED_ONLY = true;
++
+ const messages = defineMessages({
+     extensionTitle: {
+         defaultMessage: 'Choose an Extension',
+@@ -97,7 +100,7 @@ class ExtensionLibrary extends React.PureComponent {
+         };
+     }
+     componentDidMount () {
+-        if (!this.state.gallery) {
++        if (!this.state.gallery && !STUDIO_BUNDLED_ONLY) {
+             const timeout = setTimeout(() => {
+                 this.setState({
+                     galleryTimedOut: true
+@@ -158,7 +161,11 @@ class ExtensionLibrary extends React.PureComponent {
+     }
+     render () {
+         let library = null;
+-        if (this.state.gallery || this.state.galleryError || this.state.galleryTimedOut) {
++        if (STUDIO_BUNDLED_ONLY) {
++            library = extensionLibraryContent
++                .filter(item => item.extensionId !== 'custom_extension')
++                .map(toLibraryItem);
++        } else if (this.state.gallery || this.state.galleryError || this.state.galleryTimedOut) {
+             library = extensionLibraryContent.map(toLibraryItem);
+             library.push('---');
+             if (this.state.gallery) {

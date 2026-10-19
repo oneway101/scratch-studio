@@ -1,4 +1,4 @@
-// Static servers for the stage 0 checks.
+// Local servers for development and the bridge checks.
 //   8601 editor build, embeddable only from http://localhost:8602 (frame-ancestors)
 //   8602 test host page (the allowed origin)
 //   8603 test host page on an origin that is NOT allowed
@@ -23,7 +23,7 @@ const serve = (dir, port, headers) => http.createServer((req, res) => {
 }).listen(port, () => console.log(`http://localhost:${port} -> ${path.relative(root, dir)}`));
 
 const build = path.join(root, 'build');
-const host = path.join(root, 'spike/host');
+const host = path.join(root, 'dev/host');
 serve(build, 8601, {'Content-Security-Policy': "frame-ancestors http://localhost:8602"});
 serve(host, 8602, {});
 serve(host, 8603, {});

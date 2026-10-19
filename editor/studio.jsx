@@ -7,14 +7,40 @@ import AppStateHOC from '@gui/lib/app-state-hoc.jsx';
 import TWStateManagerHOC from '@gui/lib/tw-state-manager-hoc.jsx';
 import GUI from '@gui/containers/gui.jsx';
 import render from '@gui/playground/app-target';
+import {Theme, ACCENT_PURPLE, GUI_LIGHT, BLOCKS_THREE} from '@gui/lib/themes';
+import {setTheme} from '@gui/reducers/theme';
 import {installBridge} from './bridge';
+
+// The menu bar is fixed to TurboWarp's purple accent on the light theme, whatever the system prefers.
+const STUDIO_THEME = new Theme(ACCENT_PURPLE, GUI_LIGHT, BLOCKS_THREE);
+const isStudioTheme = theme => theme.accent === STUDIO_THEME.accent &&
+    theme.gui === STUDIO_THEME.gui && theme.blocks === STUDIO_THEME.blocks;
+
+const lockTheme = store => {
+    const enforce = () => {
+        if (!isStudioTheme(store.getState().scratchGui.theme.theme)) store.dispatch(setTheme(STUDIO_THEME));
+    };
+    enforce();
+    store.subscribe(enforce);
+};
+
+// Only extensions bundled with the editor (pen, music, ...) may load. Custom extensions run arbitrary
+// JavaScript, so every URL, file or pasted code path is refused here, below all the UI that offers them.
+const lockExtensions = vm => {
+    const manager = vm.extensionManager;
+    const loadExtensionURL = manager.loadExtensionURL.bind(manager);
+    manager.loadExtensionURL = url => (manager.isBuiltinExtension(url) ?
+        loadExtensionURL(url) :
+        Promise.reject(new Error(`Custom extensions are disabled: ${url}`)));
+};
 
 let vm = null;
 let installed = false;
 
 const onVmInit = _vm => {
     vm = _vm;
-    window.__studioVm = vm; // stage 0 only, for the automated checks
+    lockExtensions(vm);
+    lockTheme(window.ReduxStore);
 };
 
 const onProjectLoaded = () => {
@@ -23,7 +49,6 @@ const onProjectLoaded = () => {
     installBridge(vm, window.ReduxStore);
 };
 
-// Blocks every extension that is not bundled with the editor (custom URLs, files, pasted code).
 const securityManager = {
     canLoadExtensionFromProject: () => Promise.resolve(false)
 };
@@ -38,10 +63,12 @@ render(<WrappedGUI
     canEditTitle={false}
     canUseCloud={false}
     canChangeLanguage
+    canChangeTheme={false}
     canManageFiles={false}
     backpackVisible={false}
     routingStyle="none"
     projectId="0"
+    theme={STUDIO_THEME}
     securityManager={securityManager}
     onVmInit={onVmInit}
     onProjectLoaded={onProjectLoaded}

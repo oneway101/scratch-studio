@@ -47,10 +47,11 @@ const host = window.host = {
   log(line) { logEl.textContent = line + '\n' + logEl.textContent.slice(0, 4000); },
   // Raw post, for checks that send malformed messages.
   post(message, transfer) { frame.contentWindow.postMessage(message, EDITOR, transfer || []); },
-  request(type, payload, transfer) {
+  // timeoutMs: the site uses protocol.ts timeouts (gradeTimeoutMs for grade); 20 s is enough for most checks.
+  request(type, payload, transfer, timeoutMs = 20000) {
     const requestId = 'r' + (++host.seq);
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { host.pending.delete(requestId); reject(new Error('timeout: ' + type)); }, 20000);
+      const timer = setTimeout(() => { host.pending.delete(requestId); reject(new Error('timeout: ' + type)); }, timeoutMs);
       host.pending.set(requestId, {resolve, reject, timer});
       host.log(`→ ${type} ${describe(payload || {})}`);
       host.post({source: 'scratch-studio', version: 1, type, requestId, payload: payload || {}}, transfer);

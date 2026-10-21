@@ -193,6 +193,17 @@ await scenario('14 여러 스프라이트: 이름으로 지정',
     await makeSb3([sprite('Cat'), sprite('Dog', [[flag(), b('motion_setx', {inputs: {X: -100}})]])]),
     await makeSb3([sprite('Cat', [[flag(), b('motion_setx', {inputs: {X: -100}})]]), sprite('Dog')]));
 
+// Proposal, not in the spec yet: the music target.
+const song = (beats) => makeSb3([sprite('Cat', [[flag(), b('music_setTempo', {inputs: {TEMPO: 120}}),
+    ...[60, 62, 64].map((note, i) => b('music_playNoteForBeats', {inputs: {NOTE: note, BEATS: beats[i]}}))]])]);
+await scenario('19 (제안) music: 연주한 음, 박자, 빠르기',
+    [dynamic([{do: 'greenFlag'}, {do: 'wait', ms: 1300}], [
+        {target: 'music', property: 'notes', op: 'startsWith', value: [60, 62, 64]},
+        {target: 'music', property: 'beats', op: 'eq', value: [1, 0.5, 0.5]},
+        {target: 'music', property: 'tempo', op: 'eq', value: 120}])],
+    await song([1, 0.5, 0.5]),
+    await song([1, 1, 0.5]));
+
 /** A 2x2 PNG, so a project can have a bitmap costume. */
 const tinyPng = () => {
     const chunk = (type, data) => {

@@ -20,7 +20,9 @@ export const READINGS: Record<string, readonly string[]> = {
     variable: [],
     list: ['length', 'item'],
     stage: ['backdrop'],
-    clones: []
+    clones: [],
+    // Proposal, not in the spec yet: what the music extension played since the project loaded.
+    music: ['notes', 'beats', 'tempo']
 };
 
 /** What to read from the running project. Targets and properties are in docs/grader.md. */

@@ -19,6 +19,24 @@ const sayText = (target: Target): string => {
     return state && state.text != null ? String(state.text) : '';
 };
 
+/**
+ * Records the notes the music extension plays: the MIDI note and its length in beats. Drums are
+ * left out. Hooked below the block, so it works without an audio engine and for compiled scripts.
+ */
+const recordNotes = (runtime: any): {notes: number[]; beats: number[]} => {
+    const played = {notes: [] as number[], beats: [] as number[]};
+    const music = runtime.ext_music;
+    if (!music) return played;
+    const playNote = music._playNote.bind(music);
+    music._playNote = (util: any, note: number, durationSec: number) => {
+        const tempo = runtime.getTargetForStage().tempo;
+        played.notes.push(Math.round(note));
+        played.beats.push(Math.round(durationSec * tempo / 60 * 100) / 100);
+        return playNote(util, note, durationSec);
+    };
+    return played;
+};
+
 const costumeName = (target: Target): string | undefined => target.getCostumes()[target.currentCostume]?.name;
 
 /**
@@ -69,6 +87,7 @@ export const createGradingRuntime = (sb3: ArrayBuffer): CreateRuntime => () => w
         throw e;
     }
     const runtime = vm.runtime;
+    const played = recordNotes(runtime);
     vm.start();
 
     const sprites = (): Target[] => runtime.targets.filter((target: Target) => target.isOriginal && !target.isStage);
@@ -134,6 +153,9 @@ export const createGradingRuntime = (sb3: ArrayBuffer): CreateRuntime => () => w
             }
             case 'stage':
                 return reading.property === 'backdrop' ? costumeName(runtime.getTargetForStage()) : undefined;
+            case 'music':
+                if (reading.property === 'tempo') return runtime.getTargetForStage().tempo;
+                return reading.property === 'notes' || reading.property === 'beats' ? [...played[reading.property]] : undefined;
             case 'clones': {
                 const target = findSprite(reading.sprite);
                 if (!target || target.isStage) return undefined;

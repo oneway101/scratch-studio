@@ -178,6 +178,7 @@ describe('dynamic checks', () => {
             dynamic([{do: 'wait', ms: -1}], [x('eq', 0)]),
             dynamic([{do: 'greenFlag'}], [{target: 'sprite', property: 'colour', op: 'eq', value: 0}]),
             dynamic([{do: 'greenFlag'}], [{target: 'pen', op: 'eq', value: 0}]),
+            dynamic([{do: 'greenFlag'}], [{target: 'music', property: 'volume', op: 'eq', value: 0}]),
             dynamic([{do: 'greenFlag'}], [{target: 'variable', op: 'eq', value: 0}]),
             dynamic([{do: 'greenFlag'}], [{target: 'list', name: 'items', property: 'item', op: 'eq', value: 0}])
         ];

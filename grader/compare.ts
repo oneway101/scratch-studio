@@ -1,8 +1,13 @@
 // Comparing a value from the project (or, in dynamic checks, from the running project) with
 // the value a rule expects. Shared by static and dynamic checks.
 
-export const OPS = ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'between', 'contains'] as const;
+export const OPS = ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'between', 'contains', 'startsWith'] as const;
 export type Op = typeof OPS[number];
+
+/**
+ * Lists (music notes and beats) compare item by item: `eq` needs the same items, `startsWith`
+ * the given items first. `startsWith` on text checks the beginning of the text.
+ */
 
 /** A per-language expected value: matching either language is enough. */
 export interface Localized {
@@ -50,6 +55,10 @@ const compare = (actual: unknown, expected: unknown): number => {
 };
 
 const equals = (actual: unknown, expected: unknown, tolerance: number): boolean => {
+    if (Array.isArray(actual) || Array.isArray(expected)) {
+        return Array.isArray(actual) && Array.isArray(expected) && actual.length === expected.length &&
+            actual.every((item, i) => equals(item, expected[i], tolerance));
+    }
     const a = toNumber(actual);
     const b = toNumber(expected);
     if (a !== null && b !== null) return Math.abs(a - b) <= tolerance;
@@ -87,6 +96,9 @@ export const matches = (actual: unknown, condition: Condition): boolean => {
     case 'lt': return any(expected => compare(actual, expected) < 0);
     case 'lte': return any(expected => compare(actual, expected) <= 0);
     case 'contains': return any(expected => toText(actual).includes(toText(expected)));
+    case 'startsWith': return any(expected => (Array.isArray(expected) ?
+        Array.isArray(actual) && equals(actual.slice(0, expected.length), expected, tolerance) :
+        toText(actual).startsWith(toText(expected))));
     }
 };
 

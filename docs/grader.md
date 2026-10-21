@@ -61,7 +61,7 @@
   "inputs": { "FROM": { "op": "eq", "value": 2 }, "TO": { "op": "between", "value": [3, 5] } } }
 ```
 
-- 값만 적으면 `eq`다. 연산은 `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `between`(`[최소, 최대]`, 양 끝 포함), `contains`이고, 숫자 비교에 `tolerance`를 줄 수 있다.
+- 값만 적으면 `eq`다. 연산은 `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `between`(`[최소, 최대]`, 양 끝 포함), `contains`, `startsWith`(제안, 아래 `music`)이고, 숫자 비교에 `tolerance`를 줄 수 있다.
 - 스크래치처럼 양쪽이 숫자면 숫자로, 아니면 대소문자 구분 없이 글자로 비교한다(`"10"`과 `10`은 같다).
 - `{ "ko": "점수", "en": "score" }`처럼 언어별 값을 주면 둘 중 하나와 맞으면 된다.
 - 드롭다운이 블록에 딸린 메뉴에 있는 경우(예: `sensing_keypressed`의 `KEY_OPTION`, `sound_play`의 `SOUND_MENU`)도 같은 이름으로 비교한다.
@@ -110,6 +110,9 @@
 | `stage` | | `backdrop`(배경 이름) | |
 | `clones` | `sprite` | 없음 | 그 스프라이트의 복제본 수 |
 
+| `music` (제안) | | `notes`(연주한 음의 MIDI 번호 목록), `beats`(각 음의 박자 목록), `tempo`(빠르기) | |
+
+- `music`은 기획서에 아직 없는 제안이다. 작품을 불러온 뒤 음악 확장이 연주한 음을 기록한다(타악기는 넣지 않는다). 소리는 나지 않아도 박자만큼 기다리는 것은 학생 화면과 같다. 목록은 항목끼리 비교하고, `startsWith`(제안)는 목록이나 글이 주어진 값으로 시작하는지 본다. 예: `{ "target": "music", "property": "notes", "op": "startsWith", "value": [60, 62, 64] }`
 - `sprite`는 정적 검사와 같이 이름, `@first`를 쓴다. 없는 스프라이트를 가리키면 그 조건은 실패다.
 - `variable`과 `list`의 `name`은 `{ "ko", "en" }`로 줄 수 있다. `sprite`를 주면 그 스프라이트의 변수를 먼저, 다음에 무대의 변수를 찾는다. 주지 않으면 무대의 변수를 먼저, 다음에 스프라이트들의 변수를 찾는다.
 - 비교는 정적 검사의 값 비교와 같다. `value`에 `{ "ref": "initial" }`을 쓰면 작품을 불러온 직후, 액션 전의 값과 비교한다.

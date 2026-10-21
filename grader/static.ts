@@ -31,6 +31,10 @@ const selectTargets = (targets: Target[], sprite: unknown): Target[] => {
     return targets.filter(target => target.name === sprite);
 };
 
+/** A named sprite (or @first) that points to nothing: rules that pass on "none found" must fail instead. */
+const missingSprite = (check: StaticCheck, selected: Target[]): boolean =>
+    selected.length === 0 && check.sprite !== undefined && check.sprite !== '@any';
+
 const option = <T>(check: StaticCheck, name: string, type: 'string' | 'number' | 'boolean', required: boolean): T => {
     const value = check[name];
     if (value === undefined) {
@@ -121,14 +125,18 @@ const rules: Record<StaticRule, (check: StaticCheck, targets: Target[]) => Check
 
     notHasBlock: (check, targets) => {
         const opcode = option<string>(check, 'opcode', 'string', true);
-        const count = findBlocks(check, selectTargets(targets, check.sprite), opcode).length;
+        const selected = selectTargets(targets, check.sprite);
+        if (missingSprite(check, selected)) return result(check, false, `sprite ${String(check.sprite)}: not found`);
+        const count = findBlocks(check, selected, opcode).length;
         return result(check, count === 0, `${opcode}${filters(check)}: found ${count}, need 0`);
     },
 
     blockCount: (check, targets) => {
         const opcode = option<string>(check, 'opcode', 'string', false);
         const limits = range(check);
-        const count = findBlocks(check, selectTargets(targets, check.sprite), opcode).length;
+        const selected = selectTargets(targets, check.sprite);
+        if (missingSprite(check, selected)) return result(check, false, `sprite ${String(check.sprite)}: not found`);
+        const count = findBlocks(check, selected, opcode).length;
         return result(check, inRange(count, limits), `${opcode ?? 'all blocks'}: found ${count}, need ${limits.text}`);
     },
 

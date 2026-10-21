@@ -50,7 +50,9 @@ export interface Target {
     blocks: Map<string, Block>;
 }
 
-// Compressed primitives (sb3 serializer). 4-10 are literals; 12 and 13 are variable and list reporters.
+// Compressed primitives (sb3 serializer). 4-10 are literals; 11 is a broadcast menu; 12 and 13 are
+// variable and list reporters.
+const PRIMITIVE_BROADCAST = 11;
 const PRIMITIVE_VARIABLE = 12;
 const PRIMITIVE_LIST = 13;
 const PRIMITIVE_OPCODES: Record<number, string> = {
@@ -95,6 +97,14 @@ const readTarget = (raw: Sb3Target): Target => {
             const [shadowType, value] = input;
             if (typeof value === 'string') {
                 inputs[name] = {block: value};
+            } else if (Array.isArray(value) && value[0] === PRIMITIVE_BROADCAST) {
+                // Stored compressed, but in the editor it is a menu shadow like any other dropdown.
+                const menuId = `${id}:${name}`;
+                blocks.set(menuId, {
+                    id: menuId, opcode: 'event_broadcast_menu', shadow: true, topLevel: false, next: null,
+                    fields: {BROADCAST_OPTION: value[1]}, inputs: {}
+                });
+                inputs[name] = {block: menuId};
             } else if (Array.isArray(value)) {
                 const primitiveId = addPrimitiveBlock(blocks, `${id}:${name}`, value);
                 if (primitiveId) inputs[name] = {block: primitiveId};
@@ -184,8 +194,9 @@ export const stackOrder = (target: Target, id: string): Block[] => {
             const block = target.blocks.get(current);
             if (!block) return;
             found.push(block);
-            for (const [name, slot] of Object.entries(block.inputs)) {
-                if (name.startsWith('SUBSTACK')) visitChain(slot.block);
+            // SUBSTACK before SUBSTACK2: the JSON key order follows the order the student filled them.
+            for (const name of Object.keys(block.inputs).filter(key => key.startsWith('SUBSTACK')).sort()) {
+                visitChain(block.inputs[name].block);
             }
             current = block.next;
         }

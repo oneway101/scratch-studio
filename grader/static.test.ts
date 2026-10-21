@@ -98,6 +98,27 @@ describe('hasBlock', () => {
     });
 });
 
+describe('broadcast menus', () => {
+    // vm.toJSON() stores the broadcast dropdown compressed: [1, [11, name, id]].
+    const broadcast = (message: string): Sb3Project => {
+        const proj = project([sprite('Cat', [[flag(), b('event_broadcast')]])]);
+        const block = Object.values(proj.targets[1].blocks!)
+            .find(raw => (raw as {opcode: string}).opcode === 'event_broadcast') as {inputs: Record<string, unknown>};
+        block.inputs.BROADCAST_INPUT = [1, [11, message, 'msg-id']];
+        return proj;
+    };
+
+    it('compares the chosen message with fields', () => {
+        const rule = check('hasBlock', {opcode: 'event_broadcast', fields: {BROADCAST_INPUT: 'start'}});
+        expect(passes(broadcast('start'), rule)).toBe(true);
+        expect(passes(broadcast('stop'), rule)).toBe(false);
+    });
+
+    it('does not count the menu as a block', () => {
+        expect(passes(broadcast('start'), check('blockCount', {sprite: 'Cat', min: 2, max: 2}))).toBe(true);
+    });
+});
+
 describe('notHasBlock', () => {
     it('passes only when the block is missing', () => {
         expect(passes(arrowKeys, check('notHasBlock', {opcode: 'motion_glidesecstoxy'}))).toBe(true);
@@ -107,6 +128,11 @@ describe('notHasBlock', () => {
     it('looks only in the named sprite', () => {
         expect(passes(arrowKeys, check('notHasBlock', {opcode: 'control_forever', sprite: 'Treasure'}))).toBe(true);
         expect(passes(arrowKeys, check('notHasBlock', {opcode: 'control_forever', sprite: 'Explorer'}))).toBe(false);
+    });
+
+    it('fails when the named sprite is not in the project', () => {
+        expect(passes(arrowKeys, check('notHasBlock', {opcode: 'control_forever', sprite: 'Ghost'}))).toBe(false);
+        expect(passes(project([]), check('notHasBlock', {opcode: 'control_forever', sprite: '@first'}))).toBe(false);
     });
 
     it('ignores a loose block unless includeDetached', () => {
@@ -126,6 +152,10 @@ describe('blockCount', () => {
         // Treasure: hat, go to, wait until, touching, play sound.
         expect(passes(arrowKeys, check('blockCount', {sprite: 'Treasure', min: 5, max: 5}))).toBe(true);
         expect(passes(arrowKeys, check('blockCount', {sprite: 'Treasure', max: 4}))).toBe(false);
+    });
+
+    it('fails when the named sprite is not in the project', () => {
+        expect(passes(arrowKeys, check('blockCount', {opcode: 'control_forever', sprite: 'Ghost', max: 3}))).toBe(false);
     });
 
     it('needs min or max', () => {
@@ -158,6 +188,18 @@ describe('sequence', () => {
         expect(passes(proj, check('sequence', {opcodes: ['motion_gotoxy', 'control_repeat'], strict: true}))).toBe(true);
         expect(passes(proj, check('sequence', {opcodes: ['motion_gotoxy', 'motion_movesteps'], strict: true}))).toBe(false);
         expect(passes(proj, check('sequence', {opcodes: ['motion_gotoxy', 'motion_movesteps']}))).toBe(true);
+    });
+
+    it('visits the if branch before the else branch whatever the JSON key order', () => {
+        const ifElse = project([sprite('Cat', [[flag(), b('control_if_else', {
+            substack: [b('looks_say')], substack2: [b('looks_think')]
+        })]])]);
+        // The student filled the else branch first, so SUBSTACK2 comes first in the JSON.
+        const block = Object.values(ifElse.targets[1].blocks!)
+            .find(raw => (raw as {opcode: string}).opcode === 'control_if_else') as {inputs: Record<string, unknown>};
+        block.inputs = {SUBSTACK2: block.inputs.SUBSTACK2, SUBSTACK: block.inputs.SUBSTACK};
+        expect(passes(ifElse, check('sequence', {opcodes: ['looks_say', 'looks_think']}))).toBe(true);
+        expect(passes(ifElse, check('sequence', {opcodes: ['looks_think', 'looks_say']}))).toBe(false);
     });
 
     it('needs the blocks in one script', () => {

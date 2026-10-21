@@ -27,6 +27,11 @@ describe('compare', () => {
         expect(is(-3, {op: 'between', value: [0, 10], tolerance: 5})).toBe(true);
     });
 
+    it('does not let tolerance pass text in a range', () => {
+        expect(is('abc', {op: 'between', value: [3, 5], tolerance: 1})).toBe(false);
+        expect(is('b', {op: 'between', value: ['a', 'c'], tolerance: 1})).toBe(true);
+    });
+
     it('checks between inclusively', () => {
         expect(is(0, {op: 'between', value: [0, 10]})).toBe(true);
         expect(is(10, {op: 'between', value: [0, 10]})).toBe(true);

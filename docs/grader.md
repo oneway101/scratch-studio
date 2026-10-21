@@ -64,7 +64,7 @@
 - 값만 적으면 `eq`다. 연산은 `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `between`(`[최소, 최대]`, 양 끝 포함), `contains`이고, 숫자 비교에 `tolerance`를 줄 수 있다.
 - 스크래치처럼 양쪽이 숫자면 숫자로, 아니면 대소문자 구분 없이 글자로 비교한다(`"10"`과 `10`은 같다).
 - `{ "ko": "점수", "en": "score" }`처럼 언어별 값을 주면 둘 중 하나와 맞으면 된다.
-- 드롭다운이 블록에 딸린 메뉴에 있는 경우(예: `sensing_keypressed`의 `KEY_OPTION`, `sound_play`의 `SOUND_MENU`)도 같은 이름으로 비교한다.
+- 드롭다운이 블록에 딸린 메뉴에 있는 경우(예: `sensing_keypressed`의 `KEY_OPTION`, `sound_play`의 `SOUND_MENU`, `event_broadcast`의 `BROADCAST_INPUT`)도 같은 이름으로 비교한다.
 - 칸에 다른 블록을 끼웠으면 입력한 값이 없는 것으로 보고 `inputs` 조건은 맞지 않는다.
 
 ### `sequence`의 순서

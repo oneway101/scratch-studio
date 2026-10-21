@@ -2,6 +2,8 @@
 // It is made for one run and thrown away, so the student's editor is never touched.
 import VM from 'scratch-vm';
 import Renderer from 'scratch-render';
+import {BitmapAdapter} from '@turbowarp/scratch-svg-renderer';
+import dispatch from 'scratch-vm/src/dispatch/central-dispatch';
 import storage from '@gui/lib/storage';
 import type {CreateRuntime, GradingRuntime, Reading} from '../grader/index';
 import {variants} from '../grader/compare';
@@ -19,10 +21,31 @@ const sayText = (target: Target): string => {
 
 const costumeName = (target: Target): string | undefined => target.getCostumes()[target.currentCostume]?.name;
 
-export const createGradingRuntime = (sb3: ArrayBuffer): CreateRuntime => async () => {
+/**
+ * scratch-vm keeps one page-wide service table (central dispatch). A new VM takes over the
+ * "runtime" and "extensions" services, and its extensions take names like "extension_0_music"
+ * that the student's VM also uses. Left like that, an extension the student adds after grading
+ * would register with the grading VM that is already gone. So the table is put back as soon as
+ * the grading VM has loaded: its blocks already hold their extension objects by then.
+ */
+const withOwnServices = async <T>(work: () => Promise<T>): Promise<T> => {
+    const saved = {...dispatch.services};
+    try {
+        return await work();
+    } finally {
+        dispatch.services = saved;
+    }
+};
+
+export const createGradingRuntime = (sb3: ArrayBuffer): CreateRuntime => () => withOwnServices(async () => {
+    // Set up like the student's VM (reducers/vm.js, containers/stage.jsx): 30 frames a second,
+    // and the bitmap adapter, without which projects with bitmap costumes do not load.
+    // TurboWarp's project options (framerate and others saved in the project) load with the project.
     const vm = new VM();
+    vm.setCompatibilityMode(true);
     lockExtensions(vm);
     vm.attachStorage(storage);
+    vm.attachV2BitmapAdapter(new BitmapAdapter());
     // A renderer is required: without one, loops do not wait for redraws and run far too fast,
     // and "touching" checks have nothing to test against (docs/spike.md).
     const canvas = document.createElement('canvas');
@@ -45,9 +68,9 @@ export const createGradingRuntime = (sb3: ArrayBuffer): CreateRuntime => async (
         dispose();
         throw e;
     }
+    const runtime = vm.runtime;
     vm.start();
 
-    const runtime = vm.runtime;
     const sprites = (): Target[] => runtime.targets.filter((target: Target) => target.isOriginal && !target.isStage);
     const findSprite = (name: string | undefined): Target | undefined => {
         if (name === undefined || name === '@first') return sprites()[0];
@@ -123,4 +146,4 @@ export const createGradingRuntime = (sb3: ArrayBuffer): CreateRuntime => async (
         dispose
     };
     return grading;
-};
+});

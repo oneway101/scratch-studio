@@ -2,7 +2,9 @@
 // Needs a build (npm run build) and the servers from dev/serve.mjs (npm run serve).
 //   npm run check:grade
 // Every scenario grades a project that should pass and one that should fail.
+import {createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
+import zlib from 'node:zlib';
 import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -190,6 +192,57 @@ await scenario('14 여러 스프라이트: 이름으로 지정',
     [dynamic([{do: 'greenFlag'}, {do: 'wait', ms: 200}], [{target: 'sprite', sprite: 'Dog', property: 'x', op: 'eq', value: -100}])],
     await makeSb3([sprite('Cat'), sprite('Dog', [[flag(), b('motion_setx', {inputs: {X: -100}})]])]),
     await makeSb3([sprite('Cat', [[flag(), b('motion_setx', {inputs: {X: -100}})]]), sprite('Dog')]));
+
+/** A 2x2 PNG, so a project can have a bitmap costume. */
+const tinyPng = () => {
+    const chunk = (type, data) => {
+        const body = Buffer.concat([Buffer.from(type), data]);
+        const length = Buffer.alloc(4);
+        length.writeUInt32BE(data.length);
+        const crc = Buffer.alloc(4);
+        crc.writeUInt32BE(zlib.crc32(body));
+        return Buffer.concat([length, body, crc]);
+    };
+    const header = Buffer.alloc(13);
+    header.writeUInt32BE(2, 0);
+    header.writeUInt32BE(2, 4);
+    header[8] = 8; // bit depth
+    header[9] = 6; // RGBA
+    const pixels = Buffer.from([0, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 255, 0, 0, 255, 255, 0, 0, 255, 255]);
+    return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', header),
+        chunk('IDAT', zlib.deflateSync(pixels)), chunk('IEND', Buffer.alloc(0))]);
+};
+
+await attempt('20 비트맵(PNG) 모양이 있는 작품도 채점됨', async () => {
+    const sb3 = await makeSb3([sprite('Cat', [[flag(), b('looks_switchcostumeto', {
+        inputs: {COSTUME: {menu: 'looks_costume', value: 'photo'}}})]])]);
+    const zip = await JSZip.loadAsync(sb3);
+    const json = JSON.parse(await zip.file('project.json').async('string'));
+    const png = tinyPng();
+    const md5 = createHash('md5').update(png).digest('hex');
+    json.targets[1].costumes.push({name: 'photo', bitmapResolution: 2, dataFormat: 'png', assetId: md5,
+        md5ext: `${md5}.png`, rotationCenterX: 1, rotationCenterY: 1});
+    zip.file('project.json', JSON.stringify(json));
+    zip.file(`${md5}.png`, png);
+    const graded = await gradeProject(await zip.generateAsync({type: 'nodebuffer'}),
+        [dynamic([{do: 'greenFlag'}, {do: 'wait', ms: 200}], [cat('costume', 'eq', 'photo')])]);
+    assert(graded.result === 'pass', JSON.stringify(graded.checkResults));
+    return {result: graded.result};
+});
+
+await attempt('21 채점 뒤에도 학생 에디터가 확장(음악)을 불러와 실행함', async () => {
+    // Grading makes VMs that share scratch-vm's page-wide services with the student's VM.
+    await gradeProject(empty, [dynamic([{do: 'greenFlag'}], [cat('x', 'eq', 0)])]);
+    const sb3 = await makeSb3([sprite('Cat', [[flag(), b('music_setTempo', {inputs: {TEMPO: 90}})]])]);
+    await page.evaluate(b => window.host.request('loadProject', {sb3: new Uint8Array(b).buffer}), Array.from(sb3));
+    const tempo = await vmEval(async vm => {
+        vm.greenFlag();
+        await new Promise(resolve => setTimeout(resolve, 300));
+        return vm.runtime.getTargetForStage().tempo;
+    });
+    assert(tempo === 90, `student tempo ${tempo}`);
+    return {tempo};
+});
 
 await attempt('15 정적 + 동적: 정적이 실패하면 동적은 건너뜀', async () => {
     const sb3 = await makeSb3([sprite('Cat', [[flag(), b('motion_setx', {inputs: {X: 100}})]])]);

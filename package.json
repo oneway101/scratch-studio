@@ -5,11 +5,12 @@
   "license": "GPL-3.0",
   "description": "Scratch editor build, host site bridge and grader",
   "scripts": {
-    "vendor": "mkdir -p vendor/scratch-gui && cd vendor/scratch-gui && git init -q && git fetch --depth 1 https://github.com/TurboWarp/scratch-gui.git 1e08e6a581ddd2cd555a9ca42e0f4b6c6a4f551e && git checkout -q FETCH_HEAD && git apply ../../patches/scratch-gui.patch && CHROMEDRIVER_SKIP_DOWNLOAD=true npm ci",
+    "vendor": "mkdir -p vendor/scratch-gui && cd vendor/scratch-gui && git init -q && git fetch --depth 1 https://github.com/TurboWarp/scratch-gui.git 1e08e6a581ddd2cd555a9ca42e0f4b6c6a4f551e && git checkout -q FETCH_HEAD && git apply ../../patches/scratch-gui.patch && CHROMEDRIVER_SKIP_DOWNLOAD=true PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci",
     "build": "cd vendor/scratch-gui && NODE_ENV=production node_modules/.bin/webpack --config ../../webpack.config.js --bail",
     "typecheck": "tsc -p .",
     "serve": "node dev/serve.mjs",
     "check": "node test/bridge-check.mjs",
+    "check:grade": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/grade-check.mjs",
     "test": "vitest run"
   },
   "devDependencies": {

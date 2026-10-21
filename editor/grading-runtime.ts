@@ -1,0 +1,178 @@
+// The runtime dynamic checks run in: a second VM with a renderer on a canvas nobody sees.
+// It is made for one run and thrown away, so the student's editor is never touched.
+import VM from 'scratch-vm';
+import Renderer from 'scratch-render';
+import {BitmapAdapter} from '@turbowarp/scratch-svg-renderer';
+import dispatch from 'scratch-vm/src/dispatch/central-dispatch';
+import storage from '@gui/lib/storage';
+import type {CreateRuntime, GradingRuntime, Reading} from '../grader/index';
+import {variants} from '../grader/compare';
+import {lockExtensions} from './extensions';
+
+const STAGE_WIDTH = 480;
+const STAGE_HEIGHT = 360;
+
+type Target = any;
+
+const sayText = (target: Target): string => {
+    const state = target.getCustomState('Scratch.looks');
+    return state && state.text != null ? String(state.text) : '';
+};
+
+/**
+ * Records the notes the music extension plays: the MIDI note and its length in beats. Drums are
+ * left out. Hooked below the block, so it works without an audio engine and for compiled scripts.
+ */
+const recordNotes = (runtime: any): {notes: number[]; beats: number[]} => {
+    const played = {notes: [] as number[], beats: [] as number[]};
+    const music = runtime.ext_music;
+    if (!music) return played;
+    const playNote = music._playNote.bind(music);
+    music._playNote = (util: any, note: number, durationSec: number) => {
+        const tempo = runtime.getTargetForStage().tempo;
+        played.notes.push(Math.round(note));
+        played.beats.push(Math.round(durationSec * tempo / 60 * 100) / 100);
+        return playNote(util, note, durationSec);
+    };
+    return played;
+};
+
+const costumeName = (target: Target): string | undefined => target.getCostumes()[target.currentCostume]?.name;
+
+/**
+ * scratch-vm keeps one page-wide service table (central dispatch). A new VM takes over the
+ * "runtime" and "extensions" services, and its extensions take names like "extension_0_music"
+ * that the student's VM also uses. Left like that, an extension the student adds after grading
+ * would register with the grading VM that is already gone. So the table is put back as soon as
+ * the grading VM has loaded: its blocks already hold their extension objects by then.
+ */
+let loading: Promise<unknown> = Promise.resolve();
+const withOwnServices = <T>(work: () => Promise<T>): Promise<T> => {
+    // One load at a time: a load still going after a timeout, or a second grade request, would
+    // otherwise save a table that already holds the other grading VM's services and put it back.
+    const next = loading.then(async () => {
+        const saved = {...dispatch.services};
+        try {
+            return await work();
+        } finally {
+            dispatch.services = saved;
+        }
+    });
+    loading = next.catch(() => {});
+    return next;
+};
+
+export const createGradingRuntime = (sb3: ArrayBuffer): CreateRuntime => () => withOwnServices(async () => {
+    // Set up like the student's VM (reducers/vm.js, containers/stage.jsx): 30 frames a second,
+    // and the bitmap adapter, without which projects with bitmap costumes do not load.
+    // TurboWarp's project options (framerate and others saved in the project) load with the project.
+    const vm = new VM();
+    vm.setCompatibilityMode(true);
+    lockExtensions(vm);
+    vm.attachStorage(storage);
+    vm.attachV2BitmapAdapter(new BitmapAdapter());
+    // A renderer is required: without one, loops do not wait for redraws and run far too fast,
+    // and "touching" checks have nothing to test against (docs/spike.md).
+    const canvas = document.createElement('canvas');
+    canvas.width = STAGE_WIDTH;
+    canvas.height = STAGE_HEIGHT;
+    const renderer = new Renderer(canvas);
+    vm.attachRenderer(renderer);
+    // No audio engine: the grading VM is silent.
+    let disposed = false;
+    const dispose = () => {
+        if (disposed) return;
+        disposed = true;
+        vm.stopAll();
+        vm.quit();
+        renderer.gl?.getExtension('WEBGL_lose_context')?.loseContext();
+    };
+    try {
+        await vm.loadProject(sb3.slice(0));
+    } catch (e) {
+        dispose();
+        throw e;
+    }
+    const runtime = vm.runtime;
+    const played = recordNotes(runtime);
+    vm.start();
+
+    const sprites = (): Target[] => runtime.targets.filter((target: Target) => target.isOriginal && !target.isStage);
+    const findSprite = (name: string | undefined): Target | undefined => {
+        if (name === undefined || name === '@first') return sprites()[0];
+        if (name === '@stage') return runtime.getTargetForStage();
+        return sprites().find(target => target.getName() === name);
+    };
+    const findVariable = (reading: Reading, type: '' | 'list') => {
+        const names = variants(reading.name).map(String);
+        const stage = runtime.getTargetForStage();
+        const sprite = reading.sprite === undefined ? undefined : findSprite(reading.sprite);
+        if (reading.sprite !== undefined && !sprite) return undefined;
+        const order = sprite ? [sprite, stage] : [stage, ...sprites()];
+        for (const target of order) {
+            const variable = Object.values(target.variables as Record<string, Target>)
+                .find(candidate => candidate.type === type && names.includes(candidate.name));
+            if (variable) return variable;
+        }
+        return undefined;
+    };
+
+    const grading: GradingRuntime = {
+        greenFlag: () => vm.greenFlag(),
+        key: (key, isDown) => vm.postIOData('keyboard', {key, isDown}),
+        clickSprite: name => {
+            const target = findSprite(name);
+            if (!target || target.isStage) return false;
+            runtime.startHats('event_whenthisspriteclicked', null, target);
+            return true;
+        },
+        mouseMove: (x, y) => vm.postIOData('mouse', {
+            x: x + STAGE_WIDTH / 2, y: STAGE_HEIGHT / 2 - y, canvasWidth: STAGE_WIDTH, canvasHeight: STAGE_HEIGHT
+        }),
+        answer: text => runtime.emit('ANSWER', text),
+        // Hats compare broadcast names in upper case.
+        broadcast: message => runtime.startHats('event_whenbroadcastreceived', {BROADCAST_OPTION: message.toUpperCase()}),
+        stop: () => vm.stopAll(),
+        read: reading => {
+            switch (reading.target) {
+            case 'sprite': {
+                const target = findSprite(reading.sprite);
+                if (!target || target.isStage) return undefined;
+                switch (reading.property) {
+                case 'x': return target.x;
+                case 'y': return target.y;
+                case 'direction': return target.direction;
+                case 'size': return target.size;
+                case 'visible': return target.visible;
+                case 'costume': return costumeName(target);
+                case 'sayText': return sayText(target);
+                case 'touchingEdge': return target.isTouchingEdge();
+                default: return undefined;
+                }
+            }
+            case 'variable': return findVariable(reading, '')?.value;
+            case 'list': {
+                const list = findVariable(reading, 'list');
+                if (!list) return undefined;
+                if (reading.property === 'length') return list.value.length;
+                if (reading.property === 'item' && typeof reading.index === 'number') return list.value[reading.index - 1];
+                return undefined;
+            }
+            case 'stage':
+                return reading.property === 'backdrop' ? costumeName(runtime.getTargetForStage()) : undefined;
+            case 'music':
+                if (reading.property === 'tempo') return runtime.getTargetForStage().tempo;
+                return reading.property === 'notes' || reading.property === 'beats' ? [...played[reading.property]] : undefined;
+            case 'clones': {
+                const target = findSprite(reading.sprite);
+                if (!target || target.isStage) return undefined;
+                return runtime.targets.filter((clone: Target) => !clone.isOriginal && clone.sprite === target.sprite).length;
+            }
+            default:
+                return undefined;
+            }
+        },
+        dispose
+    };
+    return grading;
+});

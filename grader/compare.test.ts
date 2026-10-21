@@ -52,6 +52,16 @@ describe('compare', () => {
         expect(is('score', {op: 'ne', value: {ko: '점수', en: 'score'}})).toBe(false);
     });
 
+    it('compares lists item by item, and their beginning with startsWith', () => {
+        expect(is([60, 62, 64], [60, 62, 64])).toBe(true);
+        expect(is([60, 62], [60, 62, 64])).toBe(false);
+        expect(is([60, 62, 64, 65], {op: 'startsWith', value: [60, 62, 64]})).toBe(true);
+        expect(is([60, 62], {op: 'startsWith', value: [60, 62, 64]})).toBe(false);
+        expect(is([1, 0.5], {op: 'startsWith', value: [1, 0.48], tolerance: 0.05})).toBe(true);
+        expect(is(60, [60])).toBe(false);
+        expect(is('Hello there', {op: 'startsWith', value: 'hello'})).toBe(true);
+    });
+
     it('rejects unknown ops and a malformed between', () => {
         expect(() => toCondition({op: 'near', value: 1})).toThrow();
         expect(() => toCondition({op: 'between', value: 1})).toThrow();

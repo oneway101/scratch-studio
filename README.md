@@ -2,7 +2,7 @@
 
 스크래치 수업용 에디터다. TurboWarp scratch-gui를 빌드해 다른 사이트(이하 호스트 사이트)의 iframe 안에서 띄우고, 호스트 사이트와는 `postMessage`로만 통신한다. 에디터는 로그인, DB, 서버 통신이 없는 정적 앱이다.
 
-현재 2단계(정적 채점)까지 진행했다. 0단계(에디터 검증) 결과는 [docs/spike.md](docs/spike.md), 채점 규칙의 형식과 판정 방법은 [docs/grader.md](docs/grader.md)에 있다.
+현재 3단계(동적 채점)까지 진행했다. 0단계(에디터 검증) 결과는 [docs/spike.md](docs/spike.md), 채점 규칙의 형식과 판정 방법은 [docs/grader.md](docs/grader.md)에 있다.
 
 ## 실행
 
@@ -15,15 +15,18 @@ npm run build                     # build/ 에 에디터를 만든다
 npm run serve                     # 8601 에디터, 8602 시험 페이지, 8603/8604 출처 검증용
 ```
 
+`vendor`와 `build` 스크립트는 sh 문법이다. Windows에서는 Git Bash에서 같은 명령을 직접 실행하거나, npm의 스크립트 셸을 Git Bash로 지정한다(`npm config set script-shell "C:\Program Files\Git\bin\bash.exe"`).
+
 브라우저에서 http://localhost:8602 를 열면 시험 페이지의 버튼으로 메시지를 보내 볼 수 있다.
 
-점검은 세 가지다. 브리지 자동 점검은 빌드와 `npm run serve`가 떠 있어야 하고, 처음 한 번 크로미움을 설치한다.
+점검은 네 가지다. 브라우저 점검(`check`, `check:grade`)은 빌드와 `npm run serve`가 떠 있어야 하고, 처음 한 번 크로미움을 설치한다.
 
 ```
 npm run typecheck                 # editor/, grader/ 타입 검사
 npm test                          # 채점 규칙 단위 테스트 (빌드 없이 실행)
 npx playwright install chromium
 npm run check                     # 브리지 자동 점검. 결과와 화면 캡처는 test/out/
+npm run check:grade               # grade 메시지와 동적 채점 점검. 결과는 test/out/grade-result.json
 ```
 
 ## 메시지 규약
@@ -48,11 +51,13 @@ npm run check                     # 브리지 자동 점검. 결과와 화면 �
 | `editor/studio.jsx` | 에디터 진입점. 테마 고정, 번들되지 않은 확장 차단 |
 | `editor/save-status.jsx`, `editor/save-store.ts` | 메뉴 바의 저장 상태와 "저장하기" 버튼 |
 | `editor/index.ejs` | 에디터 HTML |
+| `editor/grading-runtime.ts` | 동적 채점용 실행 환경 (보이지 않는 두 번째 VM과 렌더러) |
+| `editor/extensions.ts` | 번들되지 않은 확장 차단. 학생 VM과 채점 VM에 같이 쓴다 |
 | `grader/` | 채점 엔진. UI와 분리된 TypeScript 모듈과 단위 테스트(`*.test.ts`), 시험용 작품(`fixtures/`) |
 | `patches/`, `PATCHES.md` | TurboWarp 소스에 적용하는 수정과 그 이유 |
 | `webpack.config.js` | TurboWarp의 웹팩 설정에 이 저장소의 진입점을 얹는다 |
 | `dev/` | 시험 페이지와 로컬 서버 |
-| `test/` | 브리지 자동 점검 |
+| `test/` | 브리지 점검(`bridge-check.mjs`)과 채점 점검(`grade-check.mjs`) |
 | `vendor/` | TurboWarp scratch-gui (git에 넣지 않는다) |
 
 ## 라이선스

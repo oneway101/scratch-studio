@@ -11,11 +11,14 @@ import {
     type SiteRequests, type SiteRequestType
 } from './protocol';
 import {setSaveState, setSaveRequestHandler} from './save-store';
+import {grade, GraderError} from '../grader/index';
+import {createGradingRuntime} from './grading-runtime';
 
 /** The parts of scratch-vm the bridge uses. */
 export interface StudioVM {
     loadProject (project: ArrayBuffer | string): Promise<void>;
     saveProjectSb3 (): Promise<Blob | ArrayBuffer>;
+    toJSON (): string;
     renderer: {requestSnapshot (callback: (dataUri: string) => void): void; draw (): void};
 }
 
@@ -140,8 +143,20 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
             });
             vm.renderer.draw();
         }),
-        grade: async () => {
-            throw new BridgeError('not_implemented', 'grading arrives in stages 2 and 3');
+        grade: async ({checks}) => {
+            // The snapshot: the project JSON and the sb3 are taken before anything awaits.
+            const json = vm.toJSON();
+            const sb3 = await exportSb3();
+            try {
+                const {result, checkResults} = await grade(json, checks, createGradingRuntime(sb3));
+                return {payload: {result, checkResults, sb3}, transfer: [sb3]};
+            } catch (error) {
+                // A check that cannot run, or a project that will not load in the grading VM, is a
+                // grading error: the site asks the student to try again and does not count the attempt.
+                const message = error instanceof Error ? error.message : String(error);
+                const checkResults = [{type: 'error', pass: false, detail: error instanceof GraderError ? message : `grading failed: ${message}`}];
+                return {payload: {result: 'error', checkResults, sb3}, transfer: [sb3]};
+            }
         },
         setMode: async ({mode: nextMode}) => {
             applyMode(nextMode);

@@ -23,6 +23,12 @@ interface TargetSpec {
     lists?: string[];
 }
 
+// Variable and list fields carry the id the target's variables use.
+const FIELD_IDS: Record<string, (name: string) => string> = {
+    VARIABLE: name => `var-${name}`,
+    LIST: name => `list-${name}`
+};
+
 const serializeTarget = (spec: TargetSpec, prefix: string) => {
     const blocks: Record<string, unknown> = {};
     let counter = 0;
@@ -38,7 +44,7 @@ const serializeTarget = (spec: TargetSpec, prefix: string) => {
     const addBlock = (spec: BlockSpec, id: string, parent: string | null, next: string | null, topLevel: boolean) => {
         const inputs: Record<string, unknown> = {};
         const fields: Record<string, unknown> = {};
-        for (const [name, value] of Object.entries(spec.fields || {})) fields[name] = [value, null];
+        for (const [name, value] of Object.entries(spec.fields || {})) fields[name] = [value, FIELD_IDS[name]?.(value) ?? null];
         const block: Record<string, unknown> = {opcode: spec.opcode, next, parent, inputs, fields, shadow: false, topLevel};
         if (topLevel) Object.assign(block, {x: 0, y: 0});
         blocks[id] = block;

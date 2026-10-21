@@ -90,6 +90,13 @@ const text = (action: Action, name: string): string => {
     return String(value);
 };
 
+/** Scratch's key names (docs/grader.md) as the browser key names scratch-vm understands. */
+const SCRATCH_KEYS: Record<string, string> = {
+    'space': ' ', 'left arrow': 'ArrowLeft', 'right arrow': 'ArrowRight', 'up arrow': 'ArrowUp',
+    'down arrow': 'ArrowDown', 'enter': 'Enter'
+};
+const keyName = (key: string): string => SCRATCH_KEYS[key.toLowerCase()] ?? key;
+
 const validateReading = (reading: Reading) => {
     const properties = READINGS[reading.target];
     if (!properties) throw new GraderError(`expect: unknown target ${String(reading.target)}`);
@@ -136,7 +143,7 @@ const runAction = async (runtime: GradingRuntime, action: Action, isAborted: () 
     case 'stop': return runtime.stop();
     case 'wait': return sleep(duration(action, 'ms'));
     case 'keyPress': {
-        const key = text(action, 'key');
+        const key = keyName(text(action, 'key'));
         runtime.key(key, true);
         await sleep(duration(action, 'durationMs', DEFAULT_KEY_MS));
         if (!isAborted()) runtime.key(key, false);
@@ -174,7 +181,14 @@ const runOnce = async (check: DynamicCheck, conditions: Condition[], createRunti
         timer = setTimeout(() => resolve(`timed out after ${timeoutMs}ms`), timeoutMs);
     });
     const run = async (): Promise<string | null> => {
-        runtime = await createRuntime();
+        const created = await createRuntime();
+        if (aborted) {
+            // Loaded after the timeout: the cleanup in `finally` has already run without it.
+            created.stop();
+            created.dispose();
+            return null;
+        }
+        runtime = created;
         const initial = check.expect.map(expectation => (isInitialRef(expectation.value) ? runtime!.read(expectation) : undefined));
         for (const action of check.actions) {
             if (aborted) return null;

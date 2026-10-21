@@ -105,6 +105,23 @@ describe('dynamic checks', () => {
         expect(log).toEqual(['load', 'stop', 'dispose']);
     });
 
+    it('disposes a runtime that finishes loading after the timeout', async () => {
+        const log: string[] = [];
+        const late: CreateRuntime = async () => {
+            await new Promise(resolve => setTimeout(resolve, 60));
+            return fakeRuntime({}, log)();
+        };
+        const graded = await grade(proj, [dynamic([], [x('eq', 0)], {timeoutMs: 20})], late);
+        expect(graded.checkResults[0].detail).toContain('timed out');
+        await new Promise(resolve => setTimeout(resolve, 80));
+        expect(log).toEqual(['load', 'stop', 'dispose']);
+    });
+
+    it('accepts Scratch key names', async () => {
+        const check = dynamic([{do: 'keyPress', key: 'right arrow', durationMs: 5}], [x('eq', 60)]);
+        expect((await grade(proj, [check], fakeRuntime())).result).toBe('pass');
+    });
+
     it('fails when loading never finishes', async () => {
         const never: CreateRuntime = () => new Promise(() => {});
         const graded = await grade(proj, [dynamic([], [x('eq', 0)], {timeoutMs: 20})], never);

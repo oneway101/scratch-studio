@@ -46,13 +46,20 @@ const costumeName = (target: Target): string | undefined => target.getCostumes()
  * would register with the grading VM that is already gone. So the table is put back as soon as
  * the grading VM has loaded: its blocks already hold their extension objects by then.
  */
-const withOwnServices = async <T>(work: () => Promise<T>): Promise<T> => {
-    const saved = {...dispatch.services};
-    try {
-        return await work();
-    } finally {
-        dispatch.services = saved;
-    }
+let loading: Promise<unknown> = Promise.resolve();
+const withOwnServices = <T>(work: () => Promise<T>): Promise<T> => {
+    // One load at a time: a load still going after a timeout, or a second grade request, would
+    // otherwise save a table that already holds the other grading VM's services and put it back.
+    const next = loading.then(async () => {
+        const saved = {...dispatch.services};
+        try {
+            return await work();
+        } finally {
+            dispatch.services = saved;
+        }
+    });
+    loading = next.catch(() => {});
+    return next;
 };
 
 export const createGradingRuntime = (sb3: ArrayBuffer): CreateRuntime => () => withOwnServices(async () => {

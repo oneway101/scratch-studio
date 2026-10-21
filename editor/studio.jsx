@@ -10,6 +10,7 @@ import render from '@gui/playground/app-target';
 import {Theme, ACCENT_PURPLE, GUI_LIGHT, BLOCKS_THREE} from '@gui/lib/themes';
 import {setTheme} from '@gui/reducers/theme';
 import {installBridge} from './bridge';
+import {lockExtensions} from './extensions';
 
 // The menu bar is fixed to TurboWarp's purple accent on the light theme, whatever the system prefers.
 const STUDIO_THEME = new Theme(ACCENT_PURPLE, GUI_LIGHT, BLOCKS_THREE);
@@ -22,16 +23,6 @@ const lockTheme = store => {
     };
     enforce();
     store.subscribe(enforce);
-};
-
-// Only extensions bundled with the editor (pen, music, ...) may load. Custom extensions run arbitrary
-// JavaScript, so every URL, file or pasted code path is refused here, below all the UI that offers them.
-const lockExtensions = vm => {
-    const manager = vm.extensionManager;
-    const loadExtensionURL = manager.loadExtensionURL.bind(manager);
-    manager.loadExtensionURL = url => (manager.isBuiltinExtension(url) ?
-        loadExtensionURL(url) :
-        Promise.reject(new Error(`Custom extensions are disabled: ${url}`)));
 };
 
 let vm = null;

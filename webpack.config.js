@@ -9,13 +9,14 @@ const HtmlWebpackPlugin = fromVendor('html-webpack-plugin');
 
 const config = require(path.join(vendor, 'webpack.config.js'))[0];
 const editorDir = path.resolve(__dirname, 'editor');
+const graderDir = path.resolve(__dirname, 'grader');
 
 config.context = vendor;
 config.entry = {studio: path.join(editorDir, 'studio.jsx')};
 config.output.path = path.resolve(__dirname, 'build');
 // Nearest node_modules first (scratch-vm pins older nested deps); the vendor root is for files in editor/.
 config.resolve.modules = ['node_modules', path.join(vendor, 'node_modules')];
-// webpack 4's defaults, plus .ts for editor/.
+// webpack 4's defaults, plus .ts for editor/ and grader/.
 config.resolve.extensions = ['.wasm', '.mjs', '.js', '.json', '.ts'];
 config.resolve.alias = Object.assign({}, config.resolve.alias, {
     '@gui': path.join(vendor, 'src'),
@@ -23,11 +24,11 @@ config.resolve.alias = Object.assign({}, config.resolve.alias, {
 });
 config.resolveLoader = {modules: [path.join(vendor, 'node_modules')]};
 config.module.rules[0].include.push(editorDir);
-// TypeScript in editor/ goes through the same babel-loader with the TypeScript preset added.
+// TypeScript in editor/ and grader/ goes through the same babel-loader with the TypeScript preset added.
 // Type checking is separate: npm run typecheck.
 config.module.rules.push({
     test: /\.ts$/,
-    include: [editorDir],
+    include: [editorDir, graderDir],
     loader: 'babel-loader',
     options: {
         babelrc: false,

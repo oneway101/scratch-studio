@@ -324,10 +324,11 @@ await attempt('15 번들되지 않은 확장이 든 작품은 열리지 않음',
     return {reply};
 });
 
-await attempt('16 grade: 2·3단계 전까지 not_implemented', async () => {
-    const reply = await requestError('grade', {checks: []});
-    assert(/^not_implemented/.test(reply), reply);
-    return {reply};
+await attempt('16 grade: 빈 채점 규칙은 통과, 작품(sb3)을 함께 돌려줌 (자세한 점검은 npm run check:grade)', async () => {
+    const reply = await page.evaluate(() => window.host.request('grade', {checks: []})
+        .then(r => ({result: r.result, sb3: r.sb3.byteLength})));
+    assert(reply.result === 'pass' && reply.sb3 > 0, JSON.stringify(reply));
+    return reply;
 });
 
 await attempt('17 window.__studioVm 없음', async () => {

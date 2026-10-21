@@ -85,7 +85,9 @@ export const matches = (actual: unknown, condition: Condition): boolean => {
     const tolerance = condition.tolerance ?? 0;
     if (condition.op === 'between') {
         const [min, max] = condition.value as [unknown, unknown];
-        return compare(actual, min) >= -tolerance && compare(actual, max) <= tolerance;
+        // Tolerance is for numbers only; compare() of text is just -1, 0 or 1.
+        const slack = (expected: unknown) => (toNumber(actual) !== null && toNumber(expected) !== null ? tolerance : 0);
+        return compare(actual, min) >= -slack(min) && compare(actual, max) <= slack(max);
     }
     const any = (test: (expected: unknown) => boolean) => variants(condition.value).some(test);
     switch (condition.op) {

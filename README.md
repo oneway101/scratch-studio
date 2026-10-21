@@ -2,7 +2,7 @@
 
 스크래치 수업용 에디터다. TurboWarp scratch-gui를 빌드해 다른 사이트(이하 호스트 사이트)의 iframe 안에서 띄우고, 호스트 사이트와는 `postMessage`로만 통신한다. 에디터는 로그인, DB, 서버 통신이 없는 정적 앱이다.
 
-현재 1단계(브리지)까지 진행했다. 0단계(에디터 검증) 결과는 [docs/spike.md](docs/spike.md)에 있다.
+현재 2단계(정적 채점)까지 진행했다. 0단계(에디터 검증) 결과는 [docs/spike.md](docs/spike.md), 채점 규칙의 형식과 판정 방법은 [docs/grader.md](docs/grader.md)에 있다.
 
 ## 실행
 
@@ -17,10 +17,11 @@ npm run serve                     # 8601 에디터, 8602 시험 페이지, 8603/
 
 브라우저에서 http://localhost:8602 를 열면 시험 페이지의 버튼으로 메시지를 보내 볼 수 있다.
 
-점검은 두 가지다. 자동 점검은 빌드와 `npm run serve`가 떠 있어야 하고, 처음 한 번 크로미움을 설치한다.
+점검은 세 가지다. 브리지 자동 점검은 빌드와 `npm run serve`가 떠 있어야 하고, 처음 한 번 크로미움을 설치한다.
 
 ```
-npm run typecheck                 # editor/*.ts 타입 검사
+npm run typecheck                 # editor/, grader/ 타입 검사
+npm test                          # 채점 규칙 단위 테스트 (빌드 없이 실행)
 npx playwright install chromium
 npm run check                     # 브리지 자동 점검. 결과와 화면 캡처는 test/out/
 ```
@@ -47,6 +48,7 @@ npm run check                     # 브리지 자동 점검. 결과와 화면 �
 | `editor/studio.jsx` | 에디터 진입점. 테마 고정, 번들되지 않은 확장 차단 |
 | `editor/save-status.jsx`, `editor/save-store.ts` | 메뉴 바의 저장 상태와 "저장하기" 버튼 |
 | `editor/index.ejs` | 에디터 HTML |
+| `grader/` | 채점 엔진. UI와 분리된 TypeScript 모듈과 단위 테스트(`*.test.ts`), 시험용 작품(`fixtures/`) |
 | `patches/`, `PATCHES.md` | TurboWarp 소스에 적용하는 수정과 그 이유 |
 | `webpack.config.js` | TurboWarp의 웹팩 설정에 이 저장소의 진입점을 얹는다 |
 | `dev/` | 시험 페이지와 로컬 서버 |

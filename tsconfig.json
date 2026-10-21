@@ -8,7 +8,8 @@
     "noEmit": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "resolveJsonModule": true
   },
-  "include": ["editor/**/*.ts"]
+  "include": ["editor/**/*.ts", "grader/**/*.ts"]
 }

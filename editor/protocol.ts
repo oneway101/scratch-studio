@@ -27,7 +27,7 @@ export const ERROR_CODES = [
 ] as const;
 export type ErrorCode = typeof ERROR_CODES[number];
 
-/** A grading rule. The grader defines the full shape. */
+/** A grading rule. The grader defines the full shape (docs/grader.md). */
 export interface Check {
     type: string;
     timeoutMs?: number;

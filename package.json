@@ -3,14 +3,17 @@
   "version": "0.0.0",
   "private": true,
   "license": "GPL-3.0",
-  "description": "Scratch editor build, site bridge and grader for edu-platform",
+  "description": "Scratch editor build, host site bridge and grader",
   "scripts": {
-    "vendor": "git clone --depth 1 https://github.com/TurboWarp/scratch-gui.git vendor/scratch-gui && cd vendor/scratch-gui && git apply ../../patches/scratch-gui.patch && CHROMEDRIVER_SKIP_DOWNLOAD=true npm ci",
-    "build": "cd vendor/scratch-gui && NODE_ENV=production webpack --config ../../webpack.config.js --bail",
-    "spike:serve": "node spike/serve.mjs",
-    "spike:check": "node spike/check.mjs"
+    "vendor": "mkdir -p vendor/scratch-gui && cd vendor/scratch-gui && git init -q && git fetch --depth 1 https://github.com/TurboWarp/scratch-gui.git 1e08e6a581ddd2cd555a9ca42e0f4b6c6a4f551e && git checkout -q FETCH_HEAD && git apply ../../patches/scratch-gui.patch && CHROMEDRIVER_SKIP_DOWNLOAD=true npm ci",
+    "build": "cd vendor/scratch-gui && NODE_ENV=production node_modules/.bin/webpack --config ../../webpack.config.js --bail",
+    "typecheck": "tsc -p .",
+    "serve": "node dev/serve.mjs",
+    "check": "node test/bridge-check.mjs"
   },
   "devDependencies": {
-    "@playwright/test": "^1.64.1"
+    "@babel/preset-typescript": "^7.29.7",
+    "@playwright/test": "^1.64.1",
+    "typescript": "^5.9.3"
   }
 }

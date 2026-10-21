@@ -15,12 +15,28 @@ config.entry = {studio: path.join(editorDir, 'studio.jsx')};
 config.output.path = path.resolve(__dirname, 'build');
 // Nearest node_modules first (scratch-vm pins older nested deps); the vendor root is for files in editor/.
 config.resolve.modules = ['node_modules', path.join(vendor, 'node_modules')];
+// webpack 4's defaults, plus .ts for editor/.
+config.resolve.extensions = ['.wasm', '.mjs', '.js', '.json', '.ts'];
 config.resolve.alias = Object.assign({}, config.resolve.alias, {
     '@gui': path.join(vendor, 'src'),
     '@studio': editorDir
 });
 config.resolveLoader = {modules: [path.join(vendor, 'node_modules')]};
 config.module.rules[0].include.push(editorDir);
+// TypeScript in editor/ goes through the same babel-loader with the TypeScript preset added.
+// Type checking is separate: npm run typecheck.
+config.module.rules.push({
+    test: /\.ts$/,
+    include: [editorDir],
+    loader: 'babel-loader',
+    options: {
+        babelrc: false,
+        presets: [
+            '@babel/preset-env',
+            require.resolve('@babel/preset-typescript', {paths: [__dirname]})
+        ]
+    }
+});
 config.plugins = config.plugins
     .filter(plugin => !(plugin instanceof HtmlWebpackPlugin))
     .concat([
@@ -31,7 +47,7 @@ config.plugins = config.plugins
         }),
         new HtmlWebpackPlugin({
             chunks: ['studio'],
-            template: path.join(vendor, 'src/playground/simple.ejs'),
+            template: path.join(editorDir, 'index.ejs'),
             filename: 'index.html',
             title: 'Scratch Studio'
         })

@@ -8,3 +8,4 @@ declare module 'scratch-vm';
 declare module 'scratch-render';
 declare module '@turbowarp/scratch-svg-renderer';
 declare module 'scratch-vm/src/dispatch/central-dispatch';
+declare module 'scratch-vm/src/util/timer';

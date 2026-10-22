@@ -5,17 +5,19 @@ import {grade, GraderError, type CreateRuntime, type GradingRuntime, type Readin
 
 /**
  * A stand-in for the VM: one sprite whose x moves 10 per right-arrow press, a "score" variable
- * set by the green flag, and a say bubble set by a click. Enough to drive the grading flow.
+ * set by the green flag, a say bubble set by a click, and a "time" variable with the project
+ * time that has passed. Enough to drive the grading flow.
  */
 interface World {
     x: number;
     score: number;
     say: string;
     keys: string[];
+    time: number;
 }
 
 const fakeRuntime = (setup: Partial<World> = {}, log: string[] = []): CreateRuntime => async () => {
-    const world: World = {x: 50, score: 0, say: '', keys: [], ...setup};
+    const world: World = {x: 50, score: 0, say: '', keys: [], time: 0, ...setup};
     log.push('load');
     const runtime: GradingRuntime = {
         greenFlag: () => {
@@ -35,6 +37,9 @@ const fakeRuntime = (setup: Partial<World> = {}, log: string[] = []): CreateRunt
         answer: () => {},
         broadcast: () => {},
         stop: () => log.push('stop'),
+        advance: async ms => {
+            world.time += ms;
+        },
         read: (reading: Reading) => {
             if (reading.target === 'sprite' && (reading.sprite === 'Cat' || reading.sprite === '@first')) {
                 if (reading.property === 'x') return world.x;
@@ -42,6 +47,7 @@ const fakeRuntime = (setup: Partial<World> = {}, log: string[] = []): CreateRunt
                 if (reading.property === 'costume') return world.keys.join(','); // the fake logs key events here
             }
             if (reading.target === 'variable' && reading.name === 'score') return world.score;
+            if (reading.target === 'variable' && reading.name === 'time') return world.time;
             return undefined;
         },
         dispose: () => log.push('dispose')
@@ -94,6 +100,15 @@ describe('dynamic checks', () => {
         expect((await grade(proj, [click], fakeRuntime())).result).toBe('pass');
     });
 
+    it('waits and holds keys in project time, not real time', async () => {
+        const time = (value: number) => ({target: 'variable', name: 'time', op: 'eq', value});
+        const long = dynamic([{do: 'greenFlag'}, {do: 'keyPress', key: 'a', durationMs: 250}, {do: 'wait', ms: 60000}],
+            [time(60250)], {timeoutMs: 70000});
+        const started = Date.now();
+        expect((await grade(proj, [long], fakeRuntime())).result).toBe('pass');
+        expect(Date.now() - started).toBeLessThan(250);
+    });
+
     it('fails when the check runs past timeoutMs, and stops the runtime', async () => {
         const log: string[] = [];
         const slow = dynamic([{do: 'greenFlag'}, {do: 'wait', ms: 300}], [x('eq', 0)], {timeoutMs: 30});
@@ -103,6 +118,15 @@ describe('dynamic checks', () => {
         expect(graded.checkResults[0].detail).toContain('timed out after 30ms');
         expect(Date.now() - started).toBeLessThan(250);
         expect(log).toEqual(['load', 'stop', 'dispose']);
+    });
+
+    it('runs the project up to timeoutMs before it times out', async () => {
+        let world: GradingRuntime | null = null;
+        const keep: CreateRuntime = async () => (world = await fakeRuntime()());
+        const slow = dynamic([{do: 'wait', ms: 200}, {do: 'wait', ms: 300}], [x('eq', 0)], {timeoutMs: 400});
+        const graded = await grade(proj, [slow], keep);
+        expect(graded.checkResults[0].detail).toContain('timed out after 400ms');
+        expect(world!.read({target: 'variable', name: 'time'})).toBe(400);
     });
 
     it('disposes a runtime that finishes loading after the timeout', async () => {

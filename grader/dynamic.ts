@@ -59,6 +59,11 @@ export interface GradingRuntime {
     answer (text: string): void;
     broadcast (message: string): void;
     stop (): void;
+    /**
+     * Runs the project for `ms` of project time. The grading VM skips the idle time between
+     * frames, so this takes much less real time than `ms`; the project sees `ms` pass.
+     */
+    advance (ms: number): Promise<void>;
     /** The value now, or undefined when there is nothing to read (no such sprite, variable, ...). */
     read (reading: Reading): unknown;
     dispose (): void;
@@ -66,8 +71,6 @@ export interface GradingRuntime {
 
 /** Loads the snapshot into a new runtime. */
 export type CreateRuntime = () => Promise<GradingRuntime>;
-
-const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
     typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -137,15 +140,18 @@ const validate = (check: DynamicCheck): {conditions: Condition[]} => {
     return {conditions};
 };
 
-const runAction = async (runtime: GradingRuntime, action: Action, isAborted: () => boolean) => {
+/** Moves project time forward within the check's timeoutMs. */
+type Advance = (ms: number) => Promise<void>;
+
+const runAction = async (runtime: GradingRuntime, action: Action, advance: Advance, isAborted: () => boolean) => {
     switch (action.do) {
     case 'greenFlag': return runtime.greenFlag();
     case 'stop': return runtime.stop();
-    case 'wait': return sleep(duration(action, 'ms'));
+    case 'wait': return advance(duration(action, 'ms'));
     case 'keyPress': {
         const key = keyName(text(action, 'key'));
         runtime.key(key, true);
-        await sleep(duration(action, 'durationMs', DEFAULT_KEY_MS));
+        await advance(duration(action, 'durationMs', DEFAULT_KEY_MS));
         if (!isAborted()) runtime.key(key, false);
         return;
     }
@@ -163,6 +169,9 @@ const runAction = async (runtime: GradingRuntime, action: Action, isAborted: () 
 /** An action points at something the project does not have: the check fails, like a missing sprite. */
 class MissingTarget extends Error {}
 
+/** The actions need more project time than timeoutMs. */
+class TimedOut extends Error {}
+
 const label = (expectation: Expectation): string => {
     const subject = [expectation.target, expectation.sprite, expectation.name !== undefined && JSON.stringify(expectation.name),
         expectation.property, expectation.index].filter(part => part !== undefined && part !== false).join('.');
@@ -171,14 +180,19 @@ const label = (expectation: Expectation): string => {
 
 const show = (value: unknown) => (value === undefined ? 'nothing' : JSON.stringify(value));
 
-/** One run: load, act, read. Resolves to a failure detail, or null when every expectation holds. */
+/**
+ * One run: load, act, read. Resolves to a failure detail, or null when every expectation holds.
+ * timeoutMs limits the project time the actions take, and also the real time of the whole run,
+ * in case loading or running hangs.
+ */
 const runOnce = async (check: DynamicCheck, conditions: Condition[], createRuntime: CreateRuntime): Promise<string | null> => {
     const timeoutMs = check.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const timedOutDetail = `timed out after ${timeoutMs}ms`;
     let aborted = false;
     let runtime: GradingRuntime | null = null;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timedOut = new Promise<string>(resolve => {
-        timer = setTimeout(() => resolve(`timed out after ${timeoutMs}ms`), timeoutMs);
+        timer = setTimeout(() => resolve(timedOutDetail), timeoutMs);
     });
     const run = async (): Promise<string | null> => {
         const created = await createRuntime();
@@ -189,13 +203,21 @@ const runOnce = async (check: DynamicCheck, conditions: Condition[], createRunti
             return null;
         }
         runtime = created;
+        let spent = 0;
+        const advance: Advance = async ms => {
+            const step = Math.min(ms, timeoutMs - spent);
+            await runtime!.advance(step);
+            spent += step;
+            if (step < ms) throw new TimedOut();
+        };
         const initial = check.expect.map(expectation => (isInitialRef(expectation.value) ? runtime!.read(expectation) : undefined));
         for (const action of check.actions) {
             if (aborted) return null;
             try {
-                await runAction(runtime, action, () => aborted);
+                await runAction(runtime, action, advance, () => aborted);
             } catch (e) {
                 if (e instanceof MissingTarget) return e.message;
+                if (e instanceof TimedOut) return timedOutDetail;
                 throw e;
             }
         }

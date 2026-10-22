@@ -204,6 +204,101 @@ await scenario('19 (제안) music: 연주한 음, 박자, 빠르기',
     await song([1, 0.5, 0.5]),
     await song([1, 1, 0.5]));
 
+// Project time: each block reads time in its own way (wait and the timer block: runtime.currentMSecs,
+// glide: Timer, say for secs: setTimeout). About 9 seconds of project time, graded in much less.
+const timed = until => makeSb3([sprite('Cat', [[flag(), b('sensing_resettimer'), b('motion_gotoxy', {inputs: {X: 0, Y: 0}}),
+    b('control_wait', {inputs: {DURATION: 3}}),
+    b('looks_sayforsecs', {inputs: {MESSAGE: 'A', SECS: 2}}),
+    b('motion_glidesecstoxy', {inputs: {SECS: 2, X: 100, Y: 0}}),
+    b('control_wait_until', {inputs: {CONDITION: b('operator_gt', {inputs: {OPERAND1: b('sensing_timer'), OPERAND2: until}})}}),
+    b('motion_sety', {inputs: {Y: 50}})]])]);
+await attempt('22 프로젝트 시간: 기다리기, 말하기(초), 미끄러지기, 타이머가 실제보다 빨리 끝남', async () => {
+    const checks = [
+        dynamic([{do: 'greenFlag'}, {do: 'wait', ms: 4000}], [cat('sayText', 'eq', 'A'), cat('x', 'eq', 0)]),
+        dynamic([{do: 'greenFlag'}, {do: 'wait', ms: 6000}], [cat('sayText', 'eq', ''), cat('x', 'between', [30, 70])], {timeoutMs: 8000}),
+        dynamic([{do: 'greenFlag'}, {do: 'wait', ms: 9500}], [cat('x', 'eq', 100), cat('y', 'eq', 50)], {timeoutMs: 12000})];
+    const good = await gradeProject(await timed(9), checks);
+    assert(good.result === 'pass', JSON.stringify(good.checkResults));
+    assert(good.ms < 6000, `19.5 s of project time took ${good.ms}ms`);
+    const bad = await gradeProject(await timed(11), checks);
+    assert(bad.result === 'fail' && /y eq 50/.test(bad.checkResults[2].detail), JSON.stringify(bad.checkResults));
+    return {projectMs: 19500, passMs: good.ms, failMs: bad.ms};
+});
+
+await attempt('23 채점 뒤에도 학생 에디터는 실제 시간으로 돎', async () => {
+    await gradeProject(await timed(9), [dynamic([{do: 'greenFlag'}, {do: 'wait', ms: 9500}], [cat('y', 'eq', 50)], {timeoutMs: 12000})]);
+    const sb3 = await makeSb3([sprite('Cat', [[flag(), b('motion_setx', {inputs: {X: 0}}),
+        b('control_wait', {inputs: {DURATION: 1}}), b('motion_setx', {inputs: {X: 77}})]])]);
+    await page.evaluate(b => window.host.request('loadProject', {sb3: new Uint8Array(b).buffer}), Array.from(sb3));
+    const xs = await vmEval(async vm => {
+        vm.greenFlag();
+        const x = () => vm.runtime.targets[1].x;
+        await new Promise(resolve => setTimeout(resolve, 600));
+        const early = x();
+        await new Promise(resolve => setTimeout(resolve, 700));
+        return [early, x()];
+    });
+    assert(xs[0] === 0 && xs[1] === 77, `student x after 0.6 s and 1.3 s: ${xs}`);
+    return {xs};
+});
+
+/** A silent mono 16-bit WAV of `seconds` at 22050 Hz. */
+const silentWav = seconds => {
+    const rate = 22050;
+    const samples = Math.round(seconds * rate);
+    const header = Buffer.alloc(44);
+    header.write('RIFF', 0);
+    header.writeUInt32LE(36 + samples * 2, 4);
+    header.write('WAVEfmt ', 8);
+    header.writeUInt32LE(16, 16);
+    header.writeUInt16LE(1, 20); // PCM
+    header.writeUInt16LE(1, 22); // mono
+    header.writeUInt32LE(rate, 24);
+    header.writeUInt32LE(rate * 2, 28);
+    header.writeUInt16LE(2, 32);
+    header.writeUInt16LE(16, 34);
+    header.write('data', 36);
+    header.writeUInt32LE(samples * 2, 40);
+    return {wav: Buffer.concat([header, Buffer.alloc(samples * 2)]), rate, samples};
+};
+
+/** The sb3 with sounds "tick" (0.1 s) and "beep" (`seconds`) added to its first sprite. */
+const withSound = async (sb3, seconds) => {
+    const zip = await JSZip.loadAsync(sb3);
+    const json = JSON.parse(await zip.file('project.json').async('string'));
+    // A short sound first, so playing "beep" shows that each sound keeps its own length.
+    for (const [name, length] of [['tick', 0.1], ['beep', seconds]]) {
+        const {wav, rate, samples} = silentWav(length);
+        const md5 = createHash('md5').update(wav).digest('hex');
+        json.targets[1].sounds.push({name, assetId: md5, dataFormat: 'wav', format: '', rate, sampleCount: samples, md5ext: `${md5}.wav`});
+        zip.file(`${md5}.wav`, wav);
+    }
+    zip.file('project.json', JSON.stringify(json));
+    return zip.generateAsync({type: 'nodebuffer'});
+};
+const beepUntilDone = () => b('sound_playuntildone', {inputs: {SOUND_MENU: {menu: 'sound_sounds_menu', value: 'beep'}}});
+const soundProject = (seconds, before = [], scripts = []) => makeSb3([sprite('Cat', [[flag(), b('motion_setx', {inputs: {X: 0}}),
+    ...before, beepUntilDone(), b('motion_setx', {inputs: {X: 100}})], ...scripts])]).then(sb3 => withSound(sb3, seconds));
+
+await attempt('24 소리: 끝까지 재생하기는 소리 길이만큼, 음높이와 소리 끄기도 반영', async () => {
+    const lengthChecks = [
+        dynamic([{do: 'greenFlag'}, {do: 'wait', ms: 800}], [cat('x', 'eq', 0)]),
+        dynamic([{do: 'greenFlag'}, {do: 'wait', ms: 1300}], [cat('x', 'eq', 100)])];
+    const oneSecond = await gradeProject(await soundProject(1), lengthChecks);
+    assert(oneSecond.result === 'pass', `1 s sound: ${JSON.stringify(oneSecond.checkResults)}`);
+    const twoSeconds = await gradeProject(await soundProject(2), lengthChecks);
+    assert(twoSeconds.result === 'fail' && /got 0/.test(twoSeconds.checkResults[1].detail), `2 s sound: ${JSON.stringify(twoSeconds.checkResults)}`);
+    // Pitch +120 is an octave up: twice as fast, so the 1 s sound ends after 0.5 s.
+    const octaveUp = await gradeProject(await soundProject(1, [b('sound_seteffectto', {fields: {EFFECT: 'PITCH'}, inputs: {VALUE: 120}})]),
+        [dynamic([{do: 'greenFlag'}, {do: 'wait', ms: 400}], [cat('x', 'eq', 0)]),
+            dynamic([{do: 'greenFlag'}, {do: 'wait', ms: 700}], [cat('x', 'eq', 100)])]);
+    assert(octaveUp.result === 'pass', `pitch: ${JSON.stringify(octaveUp.checkResults)}`);
+    const stopped = await gradeProject(await soundProject(2, [], [[whenKey('space'), b('sound_stopallsounds')]]),
+        [dynamic([{do: 'greenFlag'}, {do: 'wait', ms: 300}, {do: 'keyPress', key: 'space'}, {do: 'wait', ms: 200}], [cat('x', 'eq', 100)])]);
+    assert(stopped.result === 'pass', `stop all sounds: ${JSON.stringify(stopped.checkResults)}`);
+    return {oneSecondMs: oneSecond.ms, twoSecondsFail: twoSeconds.checkResults[1].detail};
+});
+
 /** A 2x2 PNG, so a project can have a bitmap costume. */
 const tinyPng = () => {
     const chunk = (type, data) => {
@@ -219,7 +314,8 @@ const tinyPng = () => {
     header.writeUInt32BE(2, 4);
     header[8] = 8; // bit depth
     header[9] = 6; // RGBA
-    const pixels = Buffer.from([0, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 255, 0, 0, 255, 255, 0, 0, 255, 255]);
+    // Each row: filter byte 0, then two RGBA pixels.
+    const pixels = Buffer.from([0, 255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 0, 255, 255, 255, 255, 255, 255]);
     return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', header),
         chunk('IDAT', zlib.deflateSync(pixels)), chunk('IEND', Buffer.alloc(0))]);
 };

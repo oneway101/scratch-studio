@@ -1,6 +1,7 @@
 // Local servers for development and the bridge checks.
-//   8601 editor build, embeddable only from http://localhost:8602 (frame-ancestors)
-//   8602 test host page (the allowed origin)
+//   8601 editor build, embeddable only from STUDIO_ALLOWED_ORIGINS (frame-ancestors).
+//        Same variable and default (http://localhost:8602) as the build.
+//   8602 test host page (the allowed origin by default)
 //   8603 test host page on an origin that is NOT allowed
 //   8604 editor build without frame-ancestors, to test message origin checks in isolation
 import http from 'node:http';
@@ -24,7 +25,9 @@ const serve = (dir, port, headers) => http.createServer((req, res) => {
 
 const build = path.join(root, 'build');
 const host = path.join(root, 'dev/host');
-serve(build, 8601, {'Content-Security-Policy': "frame-ancestors http://localhost:8602"});
+const ancestors = (process.env.STUDIO_ALLOWED_ORIGINS || 'http://localhost:8602')
+    .split(',').map(origin => origin.trim()).filter(Boolean).join(' ');
+serve(build, 8601, {'Content-Security-Policy': `frame-ancestors ${ancestors}`});
 serve(host, 8602, {});
 serve(host, 8603, {});
 serve(build, 8604, {});

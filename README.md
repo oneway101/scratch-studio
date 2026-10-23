@@ -19,6 +19,13 @@ npm run serve                     # 8601 에디터, 8602 시험 페이지, 8603/
 
 브라우저에서 http://localhost:8602 를 열면 시험 페이지의 버튼으로 메시지를 보내 볼 수 있다.
 
+다른 로컬 호스트 사이트에 붙여 보려면 빌드와 서버에 같은 `STUDIO_ALLOWED_ORIGINS`를 준다. 8602를 함께 넣어야 시험 페이지와 점검도 그대로 쓸 수 있다.
+
+```
+STUDIO_ALLOWED_ORIGINS=http://localhost:8602,http://localhost:8000 npm run build
+STUDIO_ALLOWED_ORIGINS=http://localhost:8602,http://localhost:8000 npm run serve
+```
+
 점검은 네 가지다. 브라우저 점검(`check`, `check:grade`)은 빌드와 `npm run serve`가 떠 있어야 하고, 처음 한 번 크로미움을 설치한다.
 
 ```
@@ -40,7 +47,7 @@ npm run check:grade               # grade 메시지와 동적 채점 점검. 결
 | 설정 | 위치 | 값 |
 | --- | --- | --- |
 | 메시지를 주고받을 수 있는 출처 | 빌드할 때 환경 변수 `STUDIO_ALLOWED_ORIGINS` (쉼표로 구분) | 호스트 사이트의 출처. 예: `STUDIO_ALLOWED_ORIGINS=https://edu.example.com npm run build`. 지정하지 않으면 `http://localhost:8602` |
-| 임베드를 허용할 출처 | 호스팅의 HTTP 응답 헤더 | `Content-Security-Policy: frame-ancestors <호스트 사이트의 출처>`. HTML의 `<meta>`로는 동작하지 않는다. `dev/serve.mjs`의 8601 서버가 같은 헤더를 붙인다 |
+| 임베드를 허용할 출처 | 호스팅의 HTTP 응답 헤더 | `Content-Security-Policy: frame-ancestors <호스트 사이트의 출처>`. HTML의 `<meta>`로는 동작하지 않는다. `dev/serve.mjs`의 8601 서버는 `STUDIO_ALLOWED_ORIGINS`(기본 `http://localhost:8602`)로 같은 헤더를 붙인다 |
 
 ## 구성
 

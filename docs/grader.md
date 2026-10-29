@@ -28,7 +28,7 @@
 | `hasBlock` | 블록이 `minCount`개(기본 1) 이상 있다 | `opcode`(필수), `sprite`, `minCount`, `fields`, `inputs`, `includeDetached` |
 | `notHasBlock` | 블록이 없다 | `opcode`(필수), `sprite`, `includeDetached` |
 | `blockCount` | 블록 수가 `min` 이상, `max` 이하다. `opcode`를 빼면 모든 블록을 센다 | `opcode`, `min`, `max`(둘 중 하나는 필수), `sprite`, `includeDetached` |
-| `sequence` | 한 스크립트 안에 `opcodes`가 이 순서로 있다 | `opcodes`(필수), `strict`, `sprite`, `includeDetached` |
+| `sequence` | 한 스크립트 안에 블록들이 이 순서로 있다 | `opcodes` 또는 `blocks`(둘 중 하나 필수), `strict`, `sprite`, `includeDetached` |
 | `inside` | `parent` 블록 안에 `child` 블록이 있다 | `parent`, `child`(필수), `sprite`, `includeDetached` |
 | `underHat` | `hat` 모자 블록의 스크립트에 블록이 있다 | `hat`, `opcode`(필수), `sprite` |
 | `variableExists` | 변수(또는 리스트)가 있다 | `kind`(`variable` 기본, `list`), `name`, `sprite` |
@@ -70,6 +70,21 @@
 ### `sequence`의 순서
 
 스크립트를 실행 순서대로 펼쳐 비교한다. 블록 다음에 그 블록의 C 블록 안을, 그다음에 아래 블록을 놓는다. 입력 칸에 끼운 블록은 넣지 않는다. `strict: true`이면 사이에 다른 블록이 없어야 한다.
+
+`opcodes`는 블록 종류만 본다. 값까지 보려면 `opcodes` 대신 `blocks`에 블록마다 `{ opcode, fields, inputs }`를 적는다. `fields`와 `inputs`는 `hasBlock`과 같이 비교한다. 스크립트의 첫 블록은 모자 블록이므로, 모자 블록을 맨 앞에 두면 모자 블록의 값과 그 아래 블록의 값을 짝지어 볼 수 있다.
+
+```json
+{ "type": "static", "rule": "sequence", "blocks": [
+  { "opcode": "event_whenkeypressed", "fields": { "KEY_OPTION": "right arrow" } },
+  { "opcode": "motion_changexby", "inputs": { "DX": { "op": "gt", "value": 0 } } } ] }
+{ "type": "static", "rule": "sequence", "blocks": [
+  { "opcode": "looks_sayforsecs", "inputs": { "MESSAGE": "3" } },
+  { "opcode": "looks_sayforsecs", "inputs": { "MESSAGE": "2" } },
+  { "opcode": "looks_sayforsecs", "inputs": { "MESSAGE": "1" } },
+  { "opcode": "looks_sayforsecs", "inputs": { "MESSAGE": { "ko": "출발!", "en": "Go!" } } } ] }
+```
+
+첫 규칙은 오른쪽 화살표 키 스크립트에서 x를 +로 바꿔야 통과한다(키마다 움직임이 바뀐 작품은 실패). 둘째 규칙은 3, 2, 1, 출발! 순서로 말해야 통과한다.
 
 ### `inside`와 `underHat`
 

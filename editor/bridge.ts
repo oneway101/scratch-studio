@@ -2,7 +2,7 @@
 // The editor never calls the site's API: everything goes through these messages.
 import {selectLocale} from '@gui/reducers/locales';
 import {setPlayer} from '@gui/reducers/mode';
-import {setProjectUnchanged} from '@gui/reducers/project-changed';
+import {setProjectChanged, setProjectUnchanged} from '@gui/reducers/project-changed';
 import storage from '@gui/lib/storage';
 import {
     SOURCE, VERSION, LOCALES, SITE_REQUEST_TYPES,
@@ -11,12 +11,17 @@ import {
     type SiteRequests, type SiteRequestType
 } from './protocol';
 import {setSaveState, setSaveRequestHandler} from './save-store';
+import {
+    MAX_PROJECT_BYTES, isProjectFileName, projectFileText, projectFileName, saveFile,
+    setProjectFileHandler, setProjectDownloadHandler, installProjectDrop
+} from './project-file';
 import {grade, GraderError} from '../grader/index';
 import {createGradingRuntime} from './grading-runtime';
 
 /** The parts of scratch-vm the bridge uses. */
 export interface StudioVM {
     loadProject (project: ArrayBuffer | string): Promise<void>;
+    quit (): void;
     saveProjectSb3 (): Promise<Blob | ArrayBuffer>;
     toJSON (): string;
     renderer: {requestSnapshot (callback: (dataUri: string) => void): void; draw (): void};
@@ -66,6 +71,7 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
     let parentOrigin: string | null = null;
     let lastLocale = store.getState().locales.locale;
     let lastChanged = store.getState().scratchGui.projectChanged;
+    let loading = false; // see loadQuietly
 
     const post = (message: object, origin: string, transfer: Transferable[] = []) => {
         window.parent.postMessage(message, origin, transfer);
@@ -91,7 +97,7 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
             if (isLocale(lastLocale)) sendEvent('localeChanged', {locale: lastLocale});
         }
         const changed = state.scratchGui.projectChanged;
-        if (changed !== lastChanged) {
+        if (changed !== lastChanged && !loading) {
             lastChanged = changed;
             if (changed && mode === 'edit') sendEvent('projectChanged', {});
         }
@@ -117,6 +123,67 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
         await vm.loadProject(asset.data);
     };
 
+    // Replacing a project that has blocks makes Blockly fire delete and create events, some from a
+    // timer after loadProject resolves, and the GUI takes them as edits. While the bridge loads a
+    // project they are not sent as projectChanged; the caller then marks the project changed or not.
+    const loadQuietly = async (load: () => Promise<void>) => {
+        loading = true;
+        try {
+            await load();
+            await new Promise(resolve => setTimeout(resolve, 0));
+        } finally {
+            loading = false;
+        }
+    };
+
+    // A file from the student's computer replaces the project like the site's loadProject does, but it
+    // is not what the site has saved: it is left changed, so the site saves it as it saves any edit.
+    let openingFile = false;
+    let openedFileName: string | null = null; // the name "Save to your computer" uses
+    setProjectFileHandler(async file => {
+        if (mode !== 'edit' || openingFile) return;
+        const text = projectFileText(store.getState().locales.locale);
+        if (!isProjectFileName(file.name)) {
+            alert(text.notProject); // eslint-disable-line no-alert
+            return;
+        }
+        if (file.size > MAX_PROJECT_BYTES) {
+            alert(text.tooLarge); // eslint-disable-line no-alert
+            return;
+        }
+        if (!confirm(text.replace(file.name))) return; // eslint-disable-line no-alert
+        openingFile = true;
+        // A project that fails partway through loading can leave the VM half replaced.
+        const previous = await exportSb3();
+        const wasChanged = store.getState().scratchGui.projectChanged;
+        try {
+            vm.quit();
+            const project = await file.arrayBuffer();
+            await loadQuietly(() => vm.loadProject(project));
+            vm.renderer.draw();
+            store.dispatch(setProjectChanged());
+            openedFileName = file.name;
+        } catch {
+            await loadQuietly(() => vm.loadProject(previous)).catch(() => {});
+            store.dispatch(wasChanged ? setProjectChanged() : setProjectUnchanged());
+            alert(text.failed); // eslint-disable-line no-alert
+        } finally {
+            openingFile = false;
+        }
+    });
+    installProjectDrop(() => mode === 'edit', () => store.getState().locales.locale);
+
+    // A copy for the student's computer. It does not touch the site's save status.
+    setProjectDownloadHandler(async () => {
+        if (mode !== 'edit') return;
+        const locale = store.getState().locales.locale;
+        try {
+            saveFile(projectFileName(openedFileName, locale), await exportSb3());
+        } catch {
+            alert(projectFileText(locale).saveFailed); // eslint-disable-line no-alert
+        }
+    });
+
     const handlers: Handlers = {
         init: async ({locale, mode: nextMode}) => {
             if (locale !== lastLocale) {
@@ -127,9 +194,9 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
             return {payload: {}};
         },
         loadProject: async ({sb3}) => {
-            if (sb3 === null) await loadEmptyProject();
-            else await vm.loadProject(sb3);
+            await loadQuietly(() => (sb3 === null ? loadEmptyProject() : vm.loadProject(sb3)));
             store.dispatch(setProjectUnchanged());
+            openedFileName = null;
             return {payload: {}};
         },
         exportProject: async () => {

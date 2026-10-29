@@ -19,7 +19,7 @@ index ab9a39a..daba931 100644
                                  <MenuItem
                                      key={locale}
 diff --git a/src/components/menu-bar/menu-bar.jsx b/src/components/menu-bar/menu-bar.jsx
-index 6caddb5..3702934 100644
+index 6caddb5..f904500 100644
 --- a/src/components/menu-bar/menu-bar.jsx
 +++ b/src/components/menu-bar/menu-bar.jsx
 @@ -32,6 +32,8 @@ import FramerateChanger from '../../containers/tw-framerate-changer.jsx';
@@ -27,11 +27,22 @@ index 6caddb5..3702934 100644
  import CloudVariablesToggler from '../../containers/tw-cloud-toggler.jsx';
  import TWSaveStatus from './tw-save-status.jsx';
 +import StudioSaveStatus from '@studio/save-status.jsx';
-+import StudioLoadButton from '@studio/load-button.jsx';
++import StudioFileMenu from '@studio/file-menu.jsx';
  import TWNews from './tw-news.jsx';
  
  import {openTipsLibrary, openSettingsModal, openRestorePointModal} from '../../reducers/modals';
-@@ -830,17 +832,14 @@ class MenuBar extends React.Component {
+@@ -717,6 +719,10 @@ class MenuBar extends React.Component {
+                                 </MenuBarMenu>
+                             </MenuLabel>
+                         )}
++                        <StudioFileMenu
++                            isRtl={this.props.isRtl}
++                            locale={this.props.locale}
++                        />
+                         <MenuLabel
+                             open={this.props.editMenuOpen}
+                             onOpen={this.props.onClickEdit}
+@@ -830,15 +836,6 @@ class MenuBar extends React.Component {
                                          </MenuItem>
                                      )}</CloudVariablesToggler>
                                  </MenuSection>
@@ -46,16 +57,8 @@ index 6caddb5..3702934 100644
 -                                </MenuSection>
                              </MenuBarMenu>
                          </MenuLabel>
-+                        <StudioLoadButton
-+                            className={classNames(styles.menuBarItem, styles.hoverable)}
-+                            labelClassName={styles.collapsibleLabel}
-+                            iconSrc={fileIcon}
-+                            locale={this.props.locale}
-+                        />
                          {this.props.isTotallyNormal && (
-                             <MenuLabel
-                                 open={this.props.modeMenuOpen}
-@@ -905,26 +904,6 @@ class MenuBar extends React.Component {
+@@ -905,26 +902,6 @@ class MenuBar extends React.Component {
                                  </span>
                              </div>
                          )}
@@ -82,7 +85,7 @@ index 6caddb5..3702934 100644
                      </div>
  
                      <Divider className={styles.divider} />
-@@ -1011,33 +990,10 @@ class MenuBar extends React.Component {
+@@ -1011,33 +988,10 @@ class MenuBar extends React.Component {
                              />
                          ) : []))}
                      </div>

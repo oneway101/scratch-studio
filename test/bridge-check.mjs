@@ -194,7 +194,7 @@ await attempt('09 setMode: 편집 / 실행 전용 / 블록 보기 전환, 작품
         workspace: document.querySelectorAll('.blocklyWorkspace').length,
         stage: document.querySelectorAll('canvas').length,
         saveUi: document.querySelectorAll('[data-studio=save]').length,
-        loadUi: document.querySelectorAll('[data-studio=load-button]').length
+        fileUi: document.querySelectorAll('[data-studio=file-menu]').length
     }));
     const edit = await count();
     await request('setMode', {mode: 'player'});
@@ -209,9 +209,9 @@ await attempt('09 setMode: 편집 / 실행 전용 / 블록 보기 전환, 작품
     await request('setMode', {mode: 'edit'});
     await editor.waitForSelector('.blocklyWorkspace', {timeout: 30000});
     const kept = (await opcodes()).includes('event_whenkeypressed');
-    assert(edit.workspace > 0 && edit.saveUi === 1 && edit.loadUi === 1, 'edit mode wrong');
-    assert(player.workspace === 0 && player.stage > 0 && player.saveUi === 0 && player.loadUi === 0, 'player mode wrong');
-    assert(view.workspace > 0 && view.saveUi === 0 && view.loadUi === 0, 'view mode wrong');
+    assert(edit.workspace > 0 && edit.saveUi === 1 && edit.fileUi === 1, 'edit mode wrong');
+    assert(player.workspace === 0 && player.stage > 0 && player.saveUi === 0 && player.fileUi === 0, 'player mode wrong');
+    assert(view.workspace > 0 && view.saveUi === 0 && view.fileUi === 0, 'view mode wrong');
     assert(kept, 'project lost when switching modes');
     return {edit, player, view, scriptsKept: kept};
 });
@@ -377,7 +377,7 @@ await attempt('19 스프라이트·소리·배경 라이브러리의 요청 서�
     return {sprite, backdrop, sound};
 });
 
-await attempt('20 작품 파일 불러오기: 버튼과 끌어다 놓기, 불러오면 바뀐 상태, edit 모드에서만', async () => {
+await attempt('20 작품 파일 불러오기: 파일 메뉴와 끌어다 놓기, 불러오면 바뀐 상태, edit 모드에서만', async () => {
     const dialogs = [];
     let answer = true;
     const onDialog = dialog => {
@@ -394,8 +394,9 @@ await attempt('20 작품 파일 불러오기: 버튼과 끌어다 놓기, 불러
     const changed = () => editor.evaluate(() => window.ReduxStore.getState().scratchGui.projectChanged);
     const reset = () => sendBytes('loadProject', sample);
     const pick = async (name, bytes) => {
+        await editor.click('[data-studio=file-menu]');
         const chooser = page.waitForEvent('filechooser');
-        await editor.click('[data-studio=load-button]');
+        await editor.click('[data-studio=file-load]');
         await (await chooser).setFiles({name, mimeType: 'application/x.scratch.sb3', buffer: bytes});
         await page.waitForTimeout(1500);
     };
@@ -461,10 +462,50 @@ await attempt('20 작품 파일 불러오기: 버튼과 끌어다 놓기, 불러
     }
 });
 
+await attempt('21 컴퓨터에 저장하기: 파일 메뉴로 sb3 다운로드, 연 파일 이름을 이어 씀, 사이트 저장 상태는 그대로', async () => {
+    const onDialog = dialog => dialog.accept().catch(() => {});
+    page.on('dialog', onDialog);
+    const sample = fs.readFileSync(path.join(out, 'sample.sb3'));
+    const save = async () => {
+        await editor.click('[data-studio=file-menu]');
+        const download = page.waitForEvent('download');
+        await editor.click('[data-studio=file-save]');
+        const file = await download;
+        const zip = await JSZip.loadAsync(fs.readFileSync(await file.path()));
+        const project = JSON.parse(await zip.file('project.json').async('string'));
+        const ops = Object.values(project.targets.find(t => !t.isStage).blocks).map(b => b.opcode);
+        return {name: file.suggestedFilename(), hasScript: ops.includes('event_whenkeypressed')};
+    };
+    try {
+        await sendBytes('loadProject', sample);
+        await clearEvents();
+        const fromSite = await save();
+        const changed = await editor.evaluate(() => window.ReduxStore.getState().scratchGui.projectChanged);
+        const events = await page.evaluate(() => window.host.events.map(e => e.type));
+        const status = await editor.evaluate(() => document.querySelector('[data-studio=save-status]').textContent);
+
+        await editor.click('[data-studio=file-menu]');
+        const chooser = page.waitForEvent('filechooser');
+        await editor.click('[data-studio=file-load]');
+        await (await chooser).setFiles({name: '우리 게임.sb2', mimeType: 'application/octet-stream', buffer: sample});
+        await page.waitForTimeout(1500);
+        const fromFile = await save();
+
+        assert(fromSite.name === '내 작품.sb3' && fromSite.hasScript, `from site: ${JSON.stringify(fromSite)}`);
+        assert(!changed && events.length === 0 && status === '저장됨', `site state: ${changed} ${events} ${status}`);
+        assert(fromFile.name === '우리 게임.sb3' && fromFile.hasScript, `from file: ${JSON.stringify(fromFile)}`);
+        return {fromSite, fromFile, siteEvents: events, saveStatus: status};
+    } finally {
+        page.off('dialog', onDialog);
+        await sendBytes('loadProject', sample);
+        await request('setSaveStatus', {status: 'saved'});
+    }
+});
+
 await page.close();
 
 // Origin checks need pages on the origin that is not allowed.
-await attempt('21 허용되지 않은 출처에서는 임베드 자체가 막힘 (frame-ancestors)', async () => {
+await attempt('22 허용되지 않은 출처에서는 임베드 자체가 막힘 (frame-ancestors)', async () => {
     const bad = await context.newPage();
     await bad.goto('http://localhost:8603/');
     await bad.waitForTimeout(5000);
@@ -475,7 +516,7 @@ await attempt('21 허용되지 않은 출처에서는 임베드 자체가 막힘
     return {frames};
 });
 
-await attempt('22 허용되지 않은 출처의 메시지는 무시됨 (헤더 없이도)', async () => {
+await attempt('23 허용되지 않은 출처의 메시지는 무시됨 (헤더 없이도)', async () => {
     const bad = await context.newPage();
     await bad.goto('http://localhost:8603/?editor=http://localhost:8604');
     const frame = () => bad.frames().find(f => f.url().startsWith('http://localhost:8604'));

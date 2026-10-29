@@ -1,5 +1,5 @@
-// Opening a project file from the student's computer: the menu bar "Load" button and dropping a file
-// on the editor. The bridge decides whether the file may replace the project (edit mode only) and loads it.
+// Project files on the student's computer: opening one from the File menu or by dropping it on the
+// editor, and saving the project as one from the File menu. The bridge does both, in edit mode only.
 import type {Locale} from './protocol';
 
 /** The host site's upload limit. A bigger project would open here and then fail to save. */
@@ -14,14 +14,18 @@ const TEXT = {
         notProject: '스크래치 작품 파일(.sb3)만 불러올 수 있어요.',
         tooLarge: '파일이 너무 커서 불러올 수 없어요. 20MB까지 불러올 수 있어요.',
         failed: '이 파일을 열 수 없어요. 스크래치 작품 파일인지 확인해 주세요.',
-        drop: '여기에 놓으면 작품을 불러와요'
+        drop: '여기에 놓으면 작품을 불러와요',
+        untitled: '내 작품',
+        saveFailed: '작품 파일을 만들지 못했어요. 다시 시도해 주세요.'
     },
     en: {
         replace: (name: string) => `Load "${name}"? It will replace the current project.`,
         notProject: 'Only Scratch project files (.sb3) can be loaded.',
         tooLarge: 'This file is too large to load. The limit is 20MB.',
         failed: 'This file could not be opened. Check that it is a Scratch project file.',
-        drop: 'Drop here to load the project'
+        drop: 'Drop here to load the project',
+        untitled: 'My Project',
+        saveFailed: 'The project file could not be made. Please try again.'
     }
 };
 export const projectFileText = (locale: string) => TEXT[locale as Locale] || TEXT.ko;
@@ -29,6 +33,30 @@ export const projectFileText = (locale: string) => TEXT[locale as Locale] || TEX
 let onFile = (_file: File): void => {};
 export const setProjectFileHandler = (fn: (file: File) => void): void => {
     onFile = fn;
+};
+
+let onDownload = (): void => {};
+export const setProjectDownloadHandler = (fn: () => void): void => {
+    onDownload = fn;
+};
+export const downloadProjectFile = (): void => onDownload();
+
+/** The saved file keeps the name of the file the student opened, as .sb3. */
+export const projectFileName = (openedName: string | null, locale: string): string => {
+    const base = openedName ? openedName.replace(/\.sb[23]?$/i, '') : '';
+    return `${base || projectFileText(locale).untitled}.sb3`;
+};
+
+export const saveFile = (name: string, data: ArrayBuffer): void => {
+    const url = URL.createObjectURL(new Blob([data], {type: 'application/x.scratch.sb3'}));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = name;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    // Revoking right away can cancel the download in some browsers.
+    setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
 };
 
 let input: HTMLInputElement | null = null;

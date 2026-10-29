@@ -12,7 +12,8 @@ import {
 } from './protocol';
 import {setSaveState, setSaveRequestHandler} from './save-store';
 import {
-    MAX_PROJECT_BYTES, isProjectFileName, projectFileText, setProjectFileHandler, installProjectDrop
+    MAX_PROJECT_BYTES, isProjectFileName, projectFileText, projectFileName, saveFile,
+    setProjectFileHandler, setProjectDownloadHandler, installProjectDrop
 } from './project-file';
 import {grade, GraderError} from '../grader/index';
 import {createGradingRuntime} from './grading-runtime';
@@ -138,6 +139,7 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
     // A file from the student's computer replaces the project like the site's loadProject does, but it
     // is not what the site has saved: it is left changed, so the site saves it as it saves any edit.
     let openingFile = false;
+    let openedFileName: string | null = null; // the name "Save to your computer" uses
     setProjectFileHandler(async file => {
         if (mode !== 'edit' || openingFile) return;
         const text = projectFileText(store.getState().locales.locale);
@@ -160,6 +162,7 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
             await loadQuietly(() => vm.loadProject(project));
             vm.renderer.draw();
             store.dispatch(setProjectChanged());
+            openedFileName = file.name;
         } catch {
             await loadQuietly(() => vm.loadProject(previous)).catch(() => {});
             store.dispatch(wasChanged ? setProjectChanged() : setProjectUnchanged());
@@ -169,6 +172,17 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
         }
     });
     installProjectDrop(() => mode === 'edit', () => store.getState().locales.locale);
+
+    // A copy for the student's computer. It does not touch the site's save status.
+    setProjectDownloadHandler(async () => {
+        if (mode !== 'edit') return;
+        const locale = store.getState().locales.locale;
+        try {
+            saveFile(projectFileName(openedFileName, locale), await exportSb3());
+        } catch {
+            alert(projectFileText(locale).saveFailed); // eslint-disable-line no-alert
+        }
+    });
 
     const handlers: Handlers = {
         init: async ({locale, mode: nextMode}) => {
@@ -182,6 +196,7 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
         loadProject: async ({sb3}) => {
             await loadQuietly(() => (sb3 === null ? loadEmptyProject() : vm.loadProject(sb3)));
             store.dispatch(setProjectUnchanged());
+            openedFileName = null;
             return {payload: {}};
         },
         exportProject: async () => {

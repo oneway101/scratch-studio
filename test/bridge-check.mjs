@@ -371,10 +371,94 @@ await attempt('19 스프라이트·소리·배경 라이브러리의 요청 서�
     return {sprite, backdrop, sound};
 });
 
+await attempt('20 작품 파일 불러오기: 버튼과 끌어다 놓기, 불러오면 바뀐 상태, edit 모드에서만', async () => {
+    const dialogs = [];
+    let answer = true;
+    const onDialog = dialog => {
+        dialogs.push(dialog.message());
+        (answer ? dialog.accept() : dialog.dismiss()).catch(() => {});
+    };
+    page.on('dialog', onDialog);
+    const sample = fs.readFileSync(path.join(out, 'sample.sb3'));
+    const fromFile = await editProject(sample, project => {
+        project.targets.find(t => !t.isStage).blocks.f1 = {opcode: 'looks_show', next: null, parent: null,
+            inputs: {}, fields: {}, shadow: false, topLevel: true, x: 40, y: 200};
+    });
+    const hasMarker = async () => (await opcodes()).includes('looks_show');
+    const changed = () => editor.evaluate(() => window.ReduxStore.getState().scratchGui.projectChanged);
+    const reset = () => sendBytes('loadProject', sample);
+    const pick = async (name, bytes) => {
+        const chooser = page.waitForEvent('filechooser');
+        await editor.click('[data-studio=load-button]');
+        await (await chooser).setFiles({name, mimeType: 'application/x.scratch.sb3', buffer: bytes});
+        await page.waitForTimeout(1500);
+    };
+    // A synthetic drag of a file over the code area, as the browser does for a real one.
+    const drop = async (name, bytes) => {
+        const overlay = await editor.evaluate(([n, b]) => {
+            const transfer = new DataTransfer();
+            transfer.items.add(new File([new Uint8Array(b)], n));
+            const target = document.querySelector('.blocklyWorkspace');
+            target.dispatchEvent(new DragEvent('dragover', {bubbles: true, cancelable: true, dataTransfer: transfer}));
+            const shown = document.querySelector('[data-studio=project-drop]').style.display === 'flex';
+            target.dispatchEvent(new DragEvent('drop', {bubbles: true, cancelable: true, dataTransfer: transfer}));
+            return shown;
+        }, [name, Array.from(bytes)]);
+        await page.waitForTimeout(1500);
+        return overlay;
+    };
+    try {
+        await reset();
+        await clearEvents();
+        answer = false;
+        await pick('game.sb3', fromFile);
+        const declined = {loaded: await hasMarker(), changed: await changed()};
+
+        answer = true;
+        await pick('game.sb3', fromFile);
+        await page.waitForFunction(() => window.host.events.some(e => e.type === 'projectChanged'), null, {timeout: 5000});
+        const button = {loaded: await hasMarker(), changed: await changed()};
+
+        await reset();
+        const overlay = await drop('game.sb3', fromFile);
+        const dropped = {loaded: await hasMarker(), changed: await changed(), overlay};
+
+        await reset();
+        dialogs.length = 0;
+        await drop('cat.png', fromFile);
+        const notProject = {loaded: await hasMarker(), dialogs: [...dialogs]};
+
+        dialogs.length = 0;
+        await drop('evil.sb3', await addCustomExtension(sample));
+        const broken = {kept: (await opcodes()).includes('event_whenkeypressed'), changed: await changed(),
+            dialogs: [...dialogs]};
+
+        await request('setMode', {mode: 'view'});
+        await editor.waitForSelector('.blocklyWorkspace', {timeout: 30000});
+        dialogs.length = 0;
+        await drop('game.sb3', fromFile);
+        const inView = {loaded: await hasMarker(), dialogs: dialogs.length};
+        await request('setMode', {mode: 'edit'});
+        await editor.waitForSelector('.blocklyWorkspace', {timeout: 30000});
+
+        assert(!declined.loaded && !declined.changed, `declined: ${JSON.stringify(declined)}`);
+        assert(button.loaded && button.changed, `button: ${JSON.stringify(button)}`);
+        assert(dropped.loaded && dropped.changed && dropped.overlay, `drop: ${JSON.stringify(dropped)}`);
+        assert(!notProject.loaded && notProject.dialogs.length === 1, `not a project: ${JSON.stringify(notProject)}`);
+        assert(broken.kept && !broken.changed && broken.dialogs.length === 2, `broken: ${JSON.stringify(broken)}`);
+        assert(!inView.loaded && inView.dialogs === 0, `view mode: ${JSON.stringify(inView)}`);
+        return {declined, button, dropped, notProject, broken, inView};
+    } finally {
+        page.off('dialog', onDialog);
+        await reset();
+        await request('setSaveStatus', {status: 'saved'});
+    }
+});
+
 await page.close();
 
 // Origin checks need pages on the origin that is not allowed.
-await attempt('20 허용되지 않은 출처에서는 임베드 자체가 막힘 (frame-ancestors)', async () => {
+await attempt('21 허용되지 않은 출처에서는 임베드 자체가 막힘 (frame-ancestors)', async () => {
     const bad = await context.newPage();
     await bad.goto('http://localhost:8603/');
     await bad.waitForTimeout(5000);
@@ -385,7 +469,7 @@ await attempt('20 허용되지 않은 출처에서는 임베드 자체가 막힘
     return {frames};
 });
 
-await attempt('21 허용되지 않은 출처의 메시지는 무시됨 (헤더 없이도)', async () => {
+await attempt('22 허용되지 않은 출처의 메시지는 무시됨 (헤더 없이도)', async () => {
     const bad = await context.newPage();
     await bad.goto('http://localhost:8603/?editor=http://localhost:8604');
     const frame = () => bad.frames().find(f => f.url().startsWith('http://localhost:8604'));

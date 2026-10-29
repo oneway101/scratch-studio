@@ -19,18 +19,19 @@ index ab9a39a..daba931 100644
                                  <MenuItem
                                      key={locale}
 diff --git a/src/components/menu-bar/menu-bar.jsx b/src/components/menu-bar/menu-bar.jsx
-index 6caddb5..57705b6 100644
+index 6caddb5..3702934 100644
 --- a/src/components/menu-bar/menu-bar.jsx
 +++ b/src/components/menu-bar/menu-bar.jsx
-@@ -32,6 +32,7 @@ import FramerateChanger from '../../containers/tw-framerate-changer.jsx';
+@@ -32,6 +32,8 @@ import FramerateChanger from '../../containers/tw-framerate-changer.jsx';
  import ChangeUsername from '../../containers/tw-change-username.jsx';
  import CloudVariablesToggler from '../../containers/tw-cloud-toggler.jsx';
  import TWSaveStatus from './tw-save-status.jsx';
 +import StudioSaveStatus from '@studio/save-status.jsx';
++import StudioLoadButton from '@studio/load-button.jsx';
  import TWNews from './tw-news.jsx';
  
  import {openTipsLibrary, openSettingsModal, openRestorePointModal} from '../../reducers/modals';
-@@ -830,15 +831,6 @@ class MenuBar extends React.Component {
+@@ -830,17 +832,14 @@ class MenuBar extends React.Component {
                                          </MenuItem>
                                      )}</CloudVariablesToggler>
                                  </MenuSection>
@@ -45,8 +46,16 @@ index 6caddb5..57705b6 100644
 -                                </MenuSection>
                              </MenuBarMenu>
                          </MenuLabel>
++                        <StudioLoadButton
++                            className={classNames(styles.menuBarItem, styles.hoverable)}
++                            labelClassName={styles.collapsibleLabel}
++                            iconSrc={fileIcon}
++                            locale={this.props.locale}
++                        />
                          {this.props.isTotallyNormal && (
-@@ -905,26 +897,6 @@ class MenuBar extends React.Component {
+                             <MenuLabel
+                                 open={this.props.modeMenuOpen}
+@@ -905,26 +904,6 @@ class MenuBar extends React.Component {
                                  </span>
                              </div>
                          )}
@@ -73,7 +82,7 @@ index 6caddb5..57705b6 100644
                      </div>
  
                      <Divider className={styles.divider} />
-@@ -1011,33 +983,10 @@ class MenuBar extends React.Component {
+@@ -1011,33 +990,10 @@ class MenuBar extends React.Component {
                              />
                          ) : []))}
                      </div>

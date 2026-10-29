@@ -5,6 +5,7 @@
 | 파일 | 수정 | 이유 |
 | --- | --- | --- |
 | `src/components/menu-bar/menu-bar.jsx` | `TWSaveStatus`("컴퓨터에 저장하기")를 `@studio/save-status.jsx`로 교체 (import 1줄, 사용처 1곳) | TurboWarp는 스크래치의 서버 저장 버튼을 파일 다운로드로 바꿔 놓았다. 메뉴 바의 같은 자리에 저장 상태와 "저장하기" 버튼을 넣으려면 이 자리를 바꿔야 한다. 버튼 자체는 이 저장소의 `editor/save-status.jsx`에 있다. |
+| `src/components/menu-bar/menu-bar.jsx` | 편집 메뉴 오른쪽에 `@studio/load-button.jsx`("불러오기")를 넣음 (import 1줄, 사용처 1곳) | 학생이 자기 컴퓨터의 작품 파일을 여는 버튼이다. TurboWarp의 "컴퓨터에서 불러오기"는 파일 메뉴 안에 있는데, 파일 메뉴는 "새로 만들기", "컴퓨터에 저장하기"와 함께 `canManageFiles={false}`로 숨겨 두었다. 메뉴 바의 다른 항목과 같은 모양을 쓰려고 스타일과 아이콘을 메뉴 바에서 넘긴다. 버튼과 파일 처리는 `editor/load-button.jsx`, `editor/project-file.ts`에 있다. |
 | `src/components/menu-bar/menu-bar.jsx` | "고급 설정" 버튼, 편집 메뉴의 "고급 설정" 항목, "TurboWarp 문의하기" 버튼 삭제 | 학생 화면에 필요 없는 설정과 외부 링크다. 고급 설정은 `mapDispatchToProps`가 항상 넘기는 함수로 그려져 props로 끌 수 없다. |
 | `src/components/menu-bar/language-menu.jsx` | 언어 목록을 `@studio/protocol`의 `LOCALES`(한국어, 영어)로 거름 (import 1줄, 필터 1줄) | 언어 메뉴에 한국어와 영어만 남긴다. 목록이 `@turbowarp/scratch-l10n`의 전체 언어에서 바로 만들어져 설정으로는 줄일 수 없다. |
 | `src/containers/extension-library.jsx` | 확장 라이브러리에서 "사용자 확장" 항목과 TurboWarp 확장 갤러리를 뺌 (상수 1개, 조건 2곳) | 사용자 확장과 갤러리 확장은 임의의 자바스크립트를 실행한다. 갤러리 목록을 `extensions.turbowarp.org`에서 받아 오는 요청도 없앤다. 에디터에 번들된 확장(펜, 음악 등)은 그대로 둔다. |

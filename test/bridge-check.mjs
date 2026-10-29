@@ -193,7 +193,8 @@ await attempt('09 setMode: 편집 / 실행 전용 / 블록 보기 전환, 작품
     const count = () => editor.evaluate(() => ({
         workspace: document.querySelectorAll('.blocklyWorkspace').length,
         stage: document.querySelectorAll('canvas').length,
-        saveUi: document.querySelectorAll('[data-studio=save]').length
+        saveUi: document.querySelectorAll('[data-studio=save]').length,
+        loadUi: document.querySelectorAll('[data-studio=load-button]').length
     }));
     const edit = await count();
     await request('setMode', {mode: 'player'});
@@ -208,9 +209,9 @@ await attempt('09 setMode: 편집 / 실행 전용 / 블록 보기 전환, 작품
     await request('setMode', {mode: 'edit'});
     await editor.waitForSelector('.blocklyWorkspace', {timeout: 30000});
     const kept = (await opcodes()).includes('event_whenkeypressed');
-    assert(edit.workspace > 0 && edit.saveUi === 1, 'edit mode wrong');
-    assert(player.workspace === 0 && player.stage > 0 && player.saveUi === 0, 'player mode wrong');
-    assert(view.workspace > 0 && view.saveUi === 0, 'view mode wrong');
+    assert(edit.workspace > 0 && edit.saveUi === 1 && edit.loadUi === 1, 'edit mode wrong');
+    assert(player.workspace === 0 && player.stage > 0 && player.saveUi === 0 && player.loadUi === 0, 'player mode wrong');
+    assert(view.workspace > 0 && view.saveUi === 0 && view.loadUi === 0, 'view mode wrong');
     assert(kept, 'project lost when switching modes');
     return {edit, player, view, scriptsKept: kept};
 });

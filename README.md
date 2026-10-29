@@ -56,8 +56,8 @@ npm run check:grade               # grade 메시지와 동적 채점 점검. 결
 | `editor/protocol.ts` | 메시지 규약 (타입, 오류 코드, payload 검증, 요청 제한 시간) |
 | `editor/bridge.ts` | 에디터 쪽 메시지 처리 |
 | `editor/studio.jsx` | 에디터 진입점. 테마 고정, 번들되지 않은 확장 차단 |
-| `editor/save-status.jsx`, `editor/save-store.ts` | 메뉴 바의 저장 상태와 "불러오기", "저장하기" 버튼 |
-| `editor/project-file.ts` | 학생 컴퓨터의 작품 파일 열기 ("불러오기" 버튼, 에디터에 끌어다 놓기). edit 모드에서만, 불러온 작품은 바뀐 상태가 되어 사이트가 저장한다 |
+| `editor/save-status.jsx`, `editor/save-store.ts` | 메뉴 바의 저장 상태와 "저장하기" 버튼 |
+| `editor/load-button.jsx`, `editor/project-file.ts` | 학생 컴퓨터의 작품 파일 열기 (편집 메뉴 오른쪽의 "불러오기", 에디터에 끌어다 놓기). edit 모드에서만, 불러온 작품은 바뀐 상태가 되어 사이트가 저장한다 |
 | `editor/index.ejs` | 에디터 HTML |
 | `editor/grading-runtime.ts` | 동적 채점용 실행 환경 (보이지 않는 두 번째 VM과 렌더러) |
 | `editor/extensions.ts` | 번들되지 않은 확장 차단. 학생 VM과 채점 VM에 같이 쓴다 |

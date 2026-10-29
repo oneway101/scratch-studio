@@ -134,11 +134,16 @@ await attempt('05 loadProject: 고친 sb3 열기, 열고 나면 바뀌지 않은
     const modified = await addScript(original);
     fs.writeFileSync(path.join(out, 'sample.sb3'), modified);
     await sendBytes('loadProject', modified);
+    // Again over a project that has blocks: Blockly's delete and create events come after the load.
+    await clearEvents();
+    await sendBytes('loadProject', modified);
+    await page.waitForTimeout(500);
     const ops = await opcodes();
     const changed = await editor.evaluate(() => window.ReduxStore.getState().scratchGui.projectChanged);
+    const events = (await eventsOf('projectChanged')).length;
     assert(ops.includes('event_whenkeypressed'), 'script missing');
-    assert(changed === false, 'projectChanged should be false after load');
-    return {opcodes: ops, changed};
+    assert(changed === false && events === 0, `projectChanged after load: state=${changed} events=${events}`);
+    return {opcodes: ops, changed, projectChangedEvents: events};
 });
 
 await attempt('06 loadProject: sb3 null이면 빈 프로젝트', async () => {

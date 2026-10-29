@@ -53,37 +53,68 @@ const stringList = (check: StaticCheck, name: string): string[] => {
     return value;
 };
 
-const conditions = (check: StaticCheck, name: 'fields' | 'inputs'): [string, Condition][] => {
-    const value = check[name];
+const toConditions = (rule: string, name: 'fields' | 'inputs', value: unknown): [string, Condition][] => {
     if (value === undefined) return [];
     if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-        throw new GraderError(`${check.rule}: ${name} must be an object`);
+        throw new GraderError(`${rule}: ${name} must be an object`);
     }
     try {
         return Object.entries(value).map(([key, spec]) => [key, toCondition(spec)]);
     } catch (e) {
-        throw new GraderError(`${check.rule}: ${name}: ${(e as Error).message}`);
+        throw new GraderError(`${rule}: ${name}: ${(e as Error).message}`);
     }
 };
+
+const conditions = (check: StaticCheck, name: 'fields' | 'inputs'): [string, Condition][] =>
+    toConditions(check.rule, name, check[name]);
+
+/** A block to look for: its opcode (any when undefined) and its dropdown and input values. */
+interface BlockPattern {
+    opcode: string | undefined;
+    fields: [string, Condition][];
+    inputs: [string, Condition][];
+}
+
+const fits = (target: Target, block: Block, pattern: BlockPattern): boolean =>
+    (pattern.opcode === undefined || block.opcode === pattern.opcode) &&
+    pattern.fields.every(([name, condition]) => matches(fieldValue(target, block, name), condition)) &&
+    pattern.inputs.every(([name, condition]) => {
+        const value = inputValue(block, name);
+        return value !== undefined && matches(value, condition);
+    });
 
 /** Blocks with the opcode, and the given dropdown and input values, in the selected targets. */
 const findBlocks = (check: StaticCheck, targets: Target[], opcode: string | undefined): Block[] => {
     const includeDetached = option<boolean>(check, 'includeDetached', 'boolean', false) ?? false;
-    const fieldConditions = conditions(check, 'fields');
-    const inputConditions = conditions(check, 'inputs');
-    return targets.flatMap(target => countedBlocks(target, includeDetached).filter(block =>
-        (opcode === undefined || block.opcode === opcode) &&
-        fieldConditions.every(([name, condition]) => matches(fieldValue(target, block, name), condition)) &&
-        inputConditions.every(([name, condition]) => {
-            const value = inputValue(block, name);
-            return value !== undefined && matches(value, condition);
-        })));
+    const pattern = {opcode, fields: conditions(check, 'fields'), inputs: conditions(check, 'inputs')};
+    return targets.flatMap(target => countedBlocks(target, includeDetached).filter(block => fits(target, block, pattern)));
 };
 
-const filters = (check: StaticCheck): string => [
-    ...conditions(check, 'fields').map(([name, condition]) => `${name} ${describeCondition(condition)}`),
-    ...conditions(check, 'inputs').map(([name, condition]) => `${name} ${describeCondition(condition)}`)
-].map(text => ` [${text}]`).join('');
+const describeFilters = (fields: [string, Condition][], inputs: [string, Condition][]): string =>
+    [...fields, ...inputs].map(([name, condition]) => ` [${name} ${describeCondition(condition)}]`).join('');
+
+const filters = (check: StaticCheck): string => describeFilters(conditions(check, 'fields'), conditions(check, 'inputs'));
+
+/**
+ * What each block of a sequence must be: `opcodes` gives only the opcodes, `blocks` also the
+ * dropdown and input values ({opcode, fields, inputs}, as in hasBlock).
+ */
+const sequencePatterns = (check: StaticCheck): BlockPattern[] => {
+    if (check.blocks === undefined) {
+        return stringList(check, 'opcodes').map(opcode => ({opcode, fields: [], inputs: []}));
+    }
+    if (check.opcodes !== undefined) throw new GraderError('sequence: give opcodes or blocks, not both');
+    if (!Array.isArray(check.blocks) || check.blocks.length === 0) {
+        throw new GraderError('sequence: blocks must be a list of {opcode, fields, inputs}');
+    }
+    return check.blocks.map((item: unknown) => {
+        if (typeof item !== 'object' || item === null || typeof (item as {opcode?: unknown}).opcode !== 'string') {
+            throw new GraderError('sequence: each of blocks needs an opcode');
+        }
+        const {opcode, fields, inputs} = item as {opcode: string; fields?: unknown; inputs?: unknown};
+        return {opcode, fields: toConditions('sequence', 'fields', fields), inputs: toConditions('sequence', 'inputs', inputs)};
+    });
+};
 
 const result = (check: StaticCheck, pass: boolean, detail: string): CheckResult =>
     ({type: 'static', rule: check.rule, pass, detail});
@@ -99,17 +130,17 @@ const range = (check: StaticCheck): {min?: number; max?: number; text: string} =
 const inRange = (count: number, {min, max}: {min?: number; max?: number}) =>
     (min === undefined || count >= min) && (max === undefined || count <= max);
 
-/** True when `wanted` appears in `opcodes` in order; with `strict`, with nothing in between. */
-const hasSequence = (opcodes: string[], wanted: string[], strict: boolean): boolean => {
+/** True when blocks fitting `wanted` appear in `blocks` in order; with `strict`, with nothing in between. */
+const hasSequence = (target: Target, blocks: Block[], wanted: BlockPattern[], strict: boolean): boolean => {
     if (strict) {
-        for (let start = 0; start + wanted.length <= opcodes.length; start++) {
-            if (wanted.every((opcode, i) => opcodes[start + i] === opcode)) return true;
+        for (let start = 0; start + wanted.length <= blocks.length; start++) {
+            if (wanted.every((pattern, i) => fits(target, blocks[start + i], pattern))) return true;
         }
         return false;
     }
     let next = 0;
-    for (const opcode of opcodes) {
-        if (opcode === wanted[next]) next++;
+    for (const block of blocks) {
+        if (fits(target, block, wanted[next])) next++;
         if (next === wanted.length) return true;
     }
     return false;
@@ -141,13 +172,14 @@ const rules: Record<StaticRule, (check: StaticCheck, targets: Target[]) => Check
     },
 
     sequence: (check, targets) => {
-        const wanted = stringList(check, 'opcodes');
+        const wanted = sequencePatterns(check);
         const strict = option<boolean>(check, 'strict', 'boolean', false) ?? false;
         const includeDetached = option<boolean>(check, 'includeDetached', 'boolean', false) ?? false;
         const pass = selectTargets(targets, check.sprite).some(target =>
             scriptStarts(target, includeDetached).some(start =>
-                hasSequence(stackOrder(target, start.id).map(block => block.opcode), wanted, strict)));
-        return result(check, pass, `${wanted.join(' > ')}${strict ? ' (strict)' : ''}: ${pass ? 'found' : 'not found'}`);
+                hasSequence(target, stackOrder(target, start.id), wanted, strict)));
+        const text = wanted.map(pattern => `${pattern.opcode}${describeFilters(pattern.fields, pattern.inputs)}`).join(' > ');
+        return result(check, pass, `${text}${strict ? ' (strict)' : ''}: ${pass ? 'found' : 'not found'}`);
     },
 
     inside: (check, targets) => {

@@ -213,6 +213,46 @@ describe('sequence', () => {
         expect(passes(loose, check('sequence', {opcodes: ['motion_gotoxy', 'looks_say'], includeDetached: true}))).toBe(true);
     });
 
+    it('with blocks, pairs a hat block value with the values below it', () => {
+        const right = {opcode: 'event_whenkeypressed', fields: {KEY_OPTION: 'right arrow'}};
+        const plusX = {opcode: 'motion_changexby', inputs: {DX: {op: 'gt', value: 0}}};
+        const arrows = (rightDx: number, leftDx: number) => project([sprite('Cat', [
+            [whenKey('right arrow'), b('motion_changexby', {inputs: {DX: rightDx}})],
+            [whenKey('left arrow'), b('motion_changexby', {inputs: {DX: leftDx}})]
+        ])]);
+        expect(passes(arrows(10, -10), check('sequence', {blocks: [right, plusX]}))).toBe(true);
+        // Each block is there, but the right arrow moves left.
+        expect(passes(arrows(-10, 10), check('sequence', {blocks: [right, plusX]}))).toBe(false);
+    });
+
+    it('with blocks, checks the order of values', () => {
+        const judge = (...words: string[]) => project([sprite('Judge', [[
+            flag(), ...words.map(word => b('looks_sayforsecs', {inputs: {MESSAGE: word, SECS: 1}}))
+        ]])]);
+        const countdown = check('sequence', {blocks: ['3', '2', '1', {ko: '출발!', en: 'Go!'}]
+            .map(word => ({opcode: 'looks_sayforsecs', inputs: {MESSAGE: word}}))});
+        expect(passes(judge('3', '2', '1', '출발!'), countdown)).toBe(true);
+        expect(passes(judge('3', '2', '1', 'Go!'), countdown)).toBe(true);
+        expect(passes(judge('출발!', '1', '2', '3'), countdown)).toBe(false);
+        expect(passes(judge('3', '1', '2', '출발!'), countdown)).toBe(false);
+    });
+
+    it('with blocks and strict, allows nothing in between', () => {
+        const blocks = [{opcode: 'motion_gotoxy', inputs: {X: 0}}, {opcode: 'control_repeat', inputs: {TIMES: 10}}];
+        expect(passes(proj, check('sequence', {blocks, strict: true}))).toBe(true);
+        expect(passes(proj, check('sequence', {blocks: [blocks[0], {opcode: 'looks_say'}], strict: true}))).toBe(false);
+        expect(passes(proj, check('sequence', {blocks: [{opcode: 'motion_gotoxy', inputs: {X: 5}}, blocks[1]]}))).toBe(false);
+    });
+
+    it('needs opcodes or blocks, not both, and an opcode in each of blocks', () => {
+        const run = (options: Record<string, unknown>) => () => gradeStatic(proj, [check('sequence', options)]);
+        expect(run({})).toThrow(GraderError);
+        expect(run({opcodes: ['looks_say'], blocks: [{opcode: 'looks_say'}]})).toThrow(GraderError);
+        expect(run({blocks: []})).toThrow(GraderError);
+        expect(run({blocks: [{inputs: {MESSAGE: 'done'}}]})).toThrow(GraderError);
+        expect(run({blocks: [{opcode: 'looks_say', inputs: {MESSAGE: {op: 'near', value: 1}}}]})).toThrow(GraderError);
+    });
+
     it('needs a list of opcodes', () => {
         expect(() => gradeStatic(proj, [check('sequence', {opcodes: []})])).toThrow(GraderError);
     });

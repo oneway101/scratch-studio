@@ -136,10 +136,53 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
         }
     };
 
+    // Project loads run one at a time, so a file that fails to load can put back the project it
+    // replaced without undoing a project the site opened in the meantime.
+    let loadQueue: Promise<unknown> = Promise.resolve();
+    const queueLoad = <T>(load: () => Promise<T>): Promise<T> => {
+        const run = loadQueue.then(load, load);
+        loadQueue = run.catch(() => {});
+        return run;
+    };
+    let siteLoads = 0;
+
     // A file from the student's computer replaces the project like the site's loadProject does, but it
     // is not what the site has saved: it is left changed, so the site saves it as it saves any edit.
+    // A project the site opens while the file is read wins, and the file is dropped.
     let openingFile = false;
     let openedFileName: string | null = null; // the name "Save to your computer" uses
+    const openFile = async (file: File): Promise<'loaded' | 'dropped' | 'notReady' | 'failed'> => {
+        const siteLoadsBefore = siteLoads;
+        let project: ArrayBuffer;
+        try {
+            project = await file.arrayBuffer();
+        } catch {
+            return siteLoads === siteLoadsBefore ? 'failed' : 'dropped';
+        }
+        return queueLoad(async () => {
+            if (siteLoads !== siteLoadsBefore) return 'dropped';
+            // A project that fails partway through loading can leave the VM half replaced.
+            let previous: ArrayBuffer;
+            try {
+                previous = await exportSb3();
+            } catch {
+                return 'notReady';
+            }
+            const wasChanged = store.getState().scratchGui.projectChanged;
+            try {
+                vm.quit();
+                await loadQuietly(() => vm.loadProject(project));
+                vm.renderer.draw();
+                store.dispatch(setProjectChanged());
+                openedFileName = file.name;
+                return 'loaded';
+            } catch {
+                await loadQuietly(() => vm.loadProject(previous)).catch(() => {});
+                store.dispatch(wasChanged ? setProjectChanged() : setProjectUnchanged());
+                return 'failed';
+            }
+        });
+    };
     setProjectFileHandler(async file => {
         if (mode !== 'edit' || openingFile) return;
         const text = projectFileText(store.getState().locales.locale);
@@ -153,23 +196,15 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
         }
         if (!confirm(text.replace(file.name))) return; // eslint-disable-line no-alert
         openingFile = true;
-        // A project that fails partway through loading can leave the VM half replaced.
-        const previous = await exportSb3();
-        const wasChanged = store.getState().scratchGui.projectChanged;
+        let result;
         try {
-            vm.quit();
-            const project = await file.arrayBuffer();
-            await loadQuietly(() => vm.loadProject(project));
-            vm.renderer.draw();
-            store.dispatch(setProjectChanged());
-            openedFileName = file.name;
+            result = await openFile(file);
         } catch {
-            await loadQuietly(() => vm.loadProject(previous)).catch(() => {});
-            store.dispatch(wasChanged ? setProjectChanged() : setProjectUnchanged());
-            alert(text.failed); // eslint-disable-line no-alert
+            result = 'failed';
         } finally {
             openingFile = false;
         }
+        if (result === 'notReady' || result === 'failed') alert(text[result]); // eslint-disable-line no-alert
     });
     installProjectDrop(() => mode === 'edit', () => store.getState().locales.locale);
 
@@ -194,9 +229,12 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
             return {payload: {}};
         },
         loadProject: async ({sb3}) => {
-            await loadQuietly(() => (sb3 === null ? loadEmptyProject() : vm.loadProject(sb3)));
-            store.dispatch(setProjectUnchanged());
-            openedFileName = null;
+            siteLoads++;
+            await queueLoad(async () => {
+                await loadQuietly(() => (sb3 === null ? loadEmptyProject() : vm.loadProject(sb3)));
+                store.dispatch(setProjectUnchanged());
+                openedFileName = null;
+            });
             return {payload: {}};
         },
         exportProject: async () => {

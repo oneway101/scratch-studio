@@ -14,6 +14,7 @@ const TEXT = {
         notProject: '스크래치 작품 파일(.sb3)만 불러올 수 있어요.',
         tooLarge: '파일이 너무 커서 불러올 수 없어요. 20MB까지 불러올 수 있어요.',
         failed: '이 파일을 열 수 없어요. 스크래치 작품 파일인지 확인해 주세요.',
+        notReady: '지금 작품을 정리하지 못해 파일을 불러오지 않았어요. 다시 시도해 주세요.',
         drop: '여기에 놓으면 작품을 불러와요',
         untitled: '내 작품',
         saveFailed: '작품 파일을 만들지 못했어요. 다시 시도해 주세요.'
@@ -23,6 +24,7 @@ const TEXT = {
         notProject: 'Only Scratch project files (.sb3) can be loaded.',
         tooLarge: 'This file is too large to load. The limit is 20MB.',
         failed: 'This file could not be opened. Check that it is a Scratch project file.',
+        notReady: 'The current project could not be prepared, so the file was not loaded. Please try again.',
         drop: 'Drop here to load the project',
         untitled: 'My Project',
         saveFailed: 'The project file could not be made. Please try again.'

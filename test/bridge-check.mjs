@@ -502,10 +502,117 @@ await attempt('21 컴퓨터에 저장하기: 파일 메뉴로 sb3 다운로드, 
     }
 });
 
+// Opens a file through the File menu, with confirm and alert answered and recorded.
+const withFileDialogs = async fn => {
+    const dialogs = [];
+    const onDialog = dialog => {
+        dialogs.push(dialog.message());
+        dialog.accept().catch(() => {});
+    };
+    page.on('dialog', onDialog);
+    const pick = async (name, bytes) => {
+        await editor.click('[data-studio=file-menu]');
+        const chooser = page.waitForEvent('filechooser');
+        await editor.click('[data-studio=file-load]');
+        await (await chooser).setFiles({name, mimeType: 'application/x.scratch.sb3', buffer: bytes});
+    };
+    try {
+        return await fn(pick, dialogs);
+    } finally {
+        page.off('dialog', onDialog);
+        await sendBytes('loadProject', fs.readFileSync(path.join(out, 'sample.sb3')));
+        await request('setSaveStatus', {status: 'saved'});
+    }
+};
+const spriteX = () => vmEval(vm => vm.runtime.targets.find(t => t.isOriginal && !t.isStage).x);
+const projectChangedState = () => editor.evaluate(() => window.ReduxStore.getState().scratchGui.projectChanged);
+// Holds the next File.arrayBuffer() in the editor until the check settles it.
+const holdFileRead = () => editor.evaluate(() => {
+    const original = File.prototype.arrayBuffer;
+    File.prototype.arrayBuffer = function () {
+        File.prototype.arrayBuffer = original;
+        return new Promise((resolve, reject) => {
+            window.__studioRead = {resolve: () => original.call(this).then(resolve, reject), reject};
+        });
+    };
+});
+const waitForHeldRead = () => editor.waitForFunction(() => Boolean(window.__studioRead), null, {timeout: 10000});
+const settleHeldRead = how => editor.evaluate(h => {
+    const read = window.__studioRead;
+    delete window.__studioRead;
+    if (h === 'fail') read.reject(new Error('read failed'));
+    else read.resolve();
+}, how);
+
+await attempt('22 파일을 읽는 동안 사이트가 작품을 열면 사이트 작품이 남음 (읽기 실패, 읽기 성공 모두)', async () => {
+    const sample = fs.readFileSync(path.join(out, 'sample.sb3'));
+    return withFileDialogs(async (pick, dialogs) => {
+        const run = async how => {
+            await sendBytes('loadProject', sample);
+            await vmEval(vm => vm.runtime.targets.find(t => t.isOriginal && !t.isStage).setXY(123, 0));
+            dialogs.length = 0;
+            await holdFileRead();
+            await pick('game.sb3', sample);
+            await waitForHeldRead();
+            await request('loadProject', {sb3: null});
+            await settleHeldRead(how);
+            await page.waitForTimeout(1500);
+            return {x: await spriteX(), blocks: (await opcodes()).length, changed: await projectChangedState(),
+                dialogs: dialogs.length};
+        };
+        const readFails = await run('fail');
+        const readSucceeds = await run('succeed');
+        // The site's empty project: x 0, no blocks, unchanged. Only the confirm dialog, no error.
+        for (const r of [readFails, readSucceeds]) {
+            assert(r.x === 0 && r.blocks === 0 && r.changed === false && r.dialogs === 1, JSON.stringify(r));
+        }
+        return {readFails, readSucceeds};
+    });
+});
+
+await attempt('23 지금 작품을 백업하지 못하면 안내하고, 다음 불러오기는 다시 됨', async () => {
+    const sample = fs.readFileSync(path.join(out, 'sample.sb3'));
+    const marked = await editProject(sample, project => {
+        project.targets.find(t => !t.isStage).blocks.m1 = {opcode: 'looks_hide', next: null, parent: null,
+            inputs: {}, fields: {}, shadow: false, topLevel: true, x: 40, y: 260};
+    });
+    const errors = [];
+    const onError = error => errors.push(String(error.message || error));
+    page.on('pageerror', onError);
+    try {
+        return await withFileDialogs(async (pick, dialogs) => {
+            await sendBytes('loadProject', sample);
+            await vmEval(vm => {
+                const original = vm.saveProjectSb3;
+                vm.saveProjectSb3 = function () {
+                    vm.saveProjectSb3 = original;
+                    return Promise.reject(new Error('backup failed'));
+                };
+            });
+            await pick('game.sb3', marked);
+            await page.waitForTimeout(1500);
+            const failed = {loaded: (await opcodes()).includes('looks_hide'), changed: await projectChangedState(),
+                dialogs: [...dialogs]};
+            dialogs.length = 0;
+            await pick('game.sb3', marked);
+            await page.waitForTimeout(1500);
+            const retried = {loaded: (await opcodes()).includes('looks_hide'), changed: await projectChangedState(),
+                dialogs: [...dialogs]};
+            assert(!failed.loaded && !failed.changed && failed.dialogs.length === 2 && /다시 시도/.test(failed.dialogs[1]),
+                `backup failure: ${JSON.stringify(failed)}`);
+            assert(retried.loaded && retried.changed && retried.dialogs.length === 1, `retry: ${JSON.stringify(retried)}`);
+            assert(errors.length === 0, `page errors: ${errors.join(' / ')}`);
+            return {failed, retried};
+        });
+    } finally {
+        page.off('pageerror', onError);
+    }
+});
+
 await page.close();
 
 // Origin checks need pages on the origin that is not allowed.
-await attempt('22 허용되지 않은 출처에서는 임베드 자체가 막힘 (frame-ancestors)', async () => {
+await attempt('24 허용되지 않은 출처에서는 임베드 자체가 막힘 (frame-ancestors)', async () => {
     const bad = await context.newPage();
     await bad.goto('http://localhost:8603/');
     await bad.waitForTimeout(5000);
@@ -516,7 +623,7 @@ await attempt('22 허용되지 않은 출처에서는 임베드 자체가 막힘
     return {frames};
 });
 
-await attempt('23 허용되지 않은 출처의 메시지는 무시됨 (헤더 없이도)', async () => {
+await attempt('25 허용되지 않은 출처의 메시지는 무시됨 (헤더 없이도)', async () => {
     const bad = await context.newPage();
     await bad.goto('http://localhost:8603/?editor=http://localhost:8604');
     const frame = () => bad.frames().find(f => f.url().startsWith('http://localhost:8604'));

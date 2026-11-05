@@ -612,13 +612,16 @@ await attempt('23 지금 작품을 백업하지 못하면 안내하고, 다음 �
 // Holds the next file read, project backup or project load in the editor until releaseHeld().
 const holdNext = stage => editor.evaluate(st => {
     const vm = window.ReduxStore.getState().scratchGui.vm;
+    // install: inside vm.loadProject, after the old project is cleared and before the new one is in.
     const [owner, name] = st === 'read' ? [File.prototype, 'arrayBuffer'] :
-        [vm, st === 'backup' ? 'saveProjectSb3' : 'loadProject'];
+        [vm, {backup: 'saveProjectSb3', load: 'loadProject', install: 'installTargets'}[st]];
     const original = owner[name];
     owner[name] = function (...args) {
         owner[name] = original;
+        // The VM takes the project for a backup when it is called; only the compressing is held.
+        const started = st === 'backup' ? original.apply(this, args) : null;
         return new Promise((resolve, reject) => {
-            window.__studioHold = () => original.apply(this, args).then(resolve, reject);
+            window.__studioHold = () => (started || original.apply(this, args)).then(resolve, reject);
         });
     };
 }, stage);
@@ -677,10 +680,105 @@ await attempt('24 불러오는 도중 edit 모드를 벗어나면 취소, 작품
     });
 });
 
+const spriteName = () => vmEval(vm => vm.runtime.targets.find(t => t.isOriginal && !t.isStage).getName());
+
+await attempt('25 백업하는 동안 한 편집은 불러오기가 실패해도 남음, 그동안 에디터는 잠김', async () => {
+    const sample = fs.readFileSync(path.join(out, 'sample.sb3'));
+    const evil = await addCustomExtension(sample);
+    return withFileDialogs(async (pick, dialogs) => {
+        await sendBytes('loadProject', sample);
+        const before = await spriteName();
+        dialogs.length = 0;
+        await holdNext('backup');
+        await pick('evil.sb3', evil);
+        await waitForHeld();
+        const locked = await editor.evaluate(() => window.ReduxStore.getState().scratchGui.modals.loadingProject);
+        // An edit the VM takes after the backup started, as a drag that ends on the loading screen would.
+        await vmEval(vm => vm.renameSprite(vm.runtime.targets.find(t => t.isOriginal && !t.isStage).id, 'edited'));
+        await releaseHeld();
+        await page.waitForTimeout(2000);
+        const after = {name: await spriteName(), changed: await projectChangedState(), dialogs: [...dialogs],
+            locked: await editor.evaluate(() => window.ReduxStore.getState().scratchGui.modals.loadingProject)};
+        assert(after.name === 'edited' && after.changed === true, `edit lost: ${JSON.stringify(after)}`);
+        assert(locked === true, 'editor was not locked while the backup was made');
+        assert(after.dialogs.length === 2 && /열 수 없어요/.test(after.dialogs[1]) && after.locked === false,
+            `after: ${JSON.stringify(after)}`);
+        return {before, lockedDuringBackup: locked, after};
+    });
+});
+
+await attempt('26 불러오는 중(이전 작품을 지운 뒤)의 exportProject는 불러오기가 끝난 작품을 돌려줌', async () => {
+    const sample = fs.readFileSync(path.join(out, 'sample.sb3'));
+    const moved = await editProject(sample, project => {
+        project.targets.find(t => !t.isStage).x = 123;
+    });
+    return withFileDialogs(async pick => {
+        await sendBytes('loadProject', sample);
+        await holdNext('install');
+        await pick('moved.sb3', moved);
+        await waitForHeld();
+        const midLoad = await vmEval(vm => vm.runtime.targets.length);
+        await page.evaluate(() => {
+            window.__export = window.host.request('exportProject').then(r => Array.from(new Uint8Array(r.sb3)));
+            window.__exportDone = false;
+            window.__export.then(() => {
+                window.__exportDone = true;
+            });
+        });
+        await page.waitForTimeout(1000);
+        const answeredMidLoad = await page.evaluate(() => window.__exportDone);
+        await releaseHeld();
+        const bytes = await page.evaluate(() => window.__export);
+        const zip = await JSZip.loadAsync(Buffer.from(bytes));
+        const project = JSON.parse(await zip.file('project.json').async('string'));
+        const sprite = project.targets.find(t => !t.isStage);
+        const exported = {targets: project.targets.length, x: sprite && sprite.x};
+        assert(midLoad === 0, `the VM was not cleared at the hold point: ${midLoad} targets`);
+        assert(!answeredMidLoad, 'exportProject answered while the project was loading');
+        assert(exported.targets >= 2 && exported.x === 123, `exported: ${JSON.stringify(exported)}`);
+        return {targetsMidLoad: midLoad, answeredMidLoad, exported};
+    });
+});
+
+await attempt('27 바뀐 작품을 파일로 바꿔도 projectChanged, 이전 버전의 saved는 새 작품의 변경 상태를 지우지 않음', async () => {
+    const sample = fs.readFileSync(path.join(out, 'sample.sb3'));
+    const moved = await editProject(sample, project => {
+        project.targets.find(t => !t.isStage).x = 123;
+    });
+    return withFileDialogs(async pick => {
+        await sendBytes('loadProject', sample);
+        // An edit the site starts saving: projectChanged, exportProject, setSaveStatus saving.
+        await clearEvents();
+        await vmEval(vm => vm.runtime.emitProjectChanged());
+        await page.waitForFunction(() => window.host.events.some(e => e.type === 'projectChanged'), null, {timeout: 5000});
+        await request('exportProject');
+        await request('setSaveStatus', {status: 'saving'});
+        // The student opens a file before that save is done.
+        await clearEvents();
+        await pick('moved.sb3', moved);
+        await page.waitForTimeout(1500);
+        const replaced = {events: (await eventsOf('projectChanged')).length, changed: await projectChangedState(),
+            x: await spriteX()};
+        // The older save finishes.
+        await clearEvents();
+        await request('setSaveStatus', {status: 'saved'});
+        await page.waitForTimeout(300);
+        const staleSaved = {changed: await projectChangedState(), events: (await eventsOf('projectChanged')).length};
+        // The site saves again, this time the file's project.
+        await request('exportProject');
+        await request('setSaveStatus', {status: 'saved'});
+        const saved = {changed: await projectChangedState()};
+        assert(replaced.events === 1 && replaced.changed && replaced.x === 123, `replaced: ${JSON.stringify(replaced)}`);
+        assert(staleSaved.changed === true && staleSaved.events === 1, `stale saved: ${JSON.stringify(staleSaved)}`);
+        assert(saved.changed === false, `saved: ${JSON.stringify(saved)}`);
+        return {replaced, staleSaved, saved};
+    });
+});
+
 await page.close();
 
 // Origin checks need pages on the origin that is not allowed.
-await attempt('25 허용되지 않은 출처에서는 임베드 자체가 막힘 (frame-ancestors)', async () => {
+await attempt('28 허용되지 않은 출처에서는 임베드 자체가 막힘 (frame-ancestors)', async () => {
     const bad = await context.newPage();
     await bad.goto('http://localhost:8603/');
     await bad.waitForTimeout(5000);
@@ -691,7 +789,7 @@ await attempt('25 허용되지 않은 출처에서는 임베드 자체가 막힘
     return {frames};
 });
 
-await attempt('26 허용되지 않은 출처의 메시지는 무시됨 (헤더 없이도)', async () => {
+await attempt('29 허용되지 않은 출처의 메시지는 무시됨 (헤더 없이도)', async () => {
     const bad = await context.newPage();
     await bad.goto('http://localhost:8603/?editor=http://localhost:8604');
     const frame = () => bad.frames().find(f => f.url().startsWith('http://localhost:8604'));

@@ -3,6 +3,7 @@
 import {selectLocale} from '@gui/reducers/locales';
 import {setPlayer} from '@gui/reducers/mode';
 import {setProjectChanged, setProjectUnchanged} from '@gui/reducers/project-changed';
+import {openLoadingProject, closeLoadingProject} from '@gui/reducers/modals';
 import storage from '@gui/lib/storage';
 import {
     SOURCE, VERSION, LOCALES, SITE_REQUEST_TYPES,
@@ -24,6 +25,7 @@ export interface StudioVM {
     quit (): void;
     saveProjectSb3 (): Promise<Blob | ArrayBuffer>;
     toJSON (): string;
+    on (event: 'PROJECT_CHANGED', listener: () => void): void;
     renderer: {requestSnapshot (callback: (dataUri: string) => void): void; draw (): void};
 }
 
@@ -72,6 +74,15 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
     let lastLocale = store.getState().locales.locale;
     let lastChanged = store.getState().scratchGui.projectChanged;
     let loading = false; // see loadQuietly
+    // Which version of the project the site holds. editVersion goes up with every edit and when a file
+    // replaces the project; exportedVersion is the version the site last took with exportProject or
+    // grade (or opened with loadProject). A "saved" status only clears the changed state when the two
+    // match, so a save of an older version cannot hide newer changes.
+    let editVersion = 0;
+    let exportedVersion = 0;
+    vm.on('PROJECT_CHANGED', () => {
+        if (!loading) editVersion++;
+    });
 
     const post = (message: object, origin: string, transfer: Transferable[] = []) => {
         window.parent.postMessage(message, origin, transfer);
@@ -118,10 +129,14 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
         setSaveState({enabled: next === 'edit'});
     };
 
-    const exportSb3 = async (): Promise<ArrayBuffer> => {
+    // The VM takes the project when saveProjectSb3 is called and compresses it afterwards: the sb3 is
+    // the project at that version, whatever is edited while it compresses.
+    const exportSb3WithVersion = async (): Promise<{sb3: ArrayBuffer; version: number}> => {
+        const version = editVersion;
         const blob = await vm.saveProjectSb3();
-        return blob instanceof ArrayBuffer ? blob : blob.arrayBuffer();
+        return {sb3: blob instanceof ArrayBuffer ? blob : await blob.arrayBuffer(), version};
     };
+    const exportSb3 = async (): Promise<ArrayBuffer> => (await exportSb3WithVersion()).sb3;
 
     const loadEmptyProject = async () => {
         const asset = await storage.load(storage.AssetType.Project, '0', storage.DataFormat.JSON);
@@ -142,12 +157,28 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
     };
 
     // Project loads run one at a time, so a file that fails to load can put back the project it
-    // replaced without undoing a project the site opened in the meantime.
-    let loadQueue: Promise<unknown> = Promise.resolve();
-    const queueLoad = <T>(load: () => Promise<T>): Promise<T> => {
-        const run = loadQueue.then(load, load);
-        loadQueue = run.catch(() => {});
+    // replaced without undoing a project the site opened in the meantime. Exports go through the same
+    // queue: while a project loads, the VM has already cleared the old one, and an export would be empty.
+    let projectQueue: Promise<unknown> = Promise.resolve();
+    const queueProject = <T>(work: () => Promise<T>): Promise<T> => {
+        const run = projectQueue.then(work, work);
+        projectQueue = run.catch(() => {});
         return run;
+    };
+
+    // While a file replaces the project, the GUI's loading screen covers the editor and keys are held
+    // back, so nothing the student does falls between the backup and the replacement.
+    const lockEditing = () => {
+        const holdKey = (e: KeyboardEvent) => {
+            e.preventDefault();
+            e.stopPropagation();
+        };
+        window.addEventListener('keydown', holdKey, true);
+        store.dispatch(openLoadingProject());
+        return () => {
+            window.removeEventListener('keydown', holdKey, true);
+            store.dispatch(closeLoadingProject());
+        };
     };
 
     // A file from the student's computer replaces the project like the site's loadProject does, but it
@@ -165,37 +196,56 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
         } catch {
             return cancelled() ? 'cancelled' : 'failed';
         }
-        return queueLoad(async () => {
+        return queueProject(async () => {
             if (cancelled()) return 'cancelled';
-            // A project that fails partway through loading can leave the VM half replaced.
-            let previous: ArrayBuffer;
+            const unlock = lockEditing();
             try {
-                previous = await exportSb3();
-            } catch {
-                return cancelled() ? 'cancelled' : 'notReady';
+                return await replaceWithFile(file, project, cancelled);
+            } finally {
+                unlock();
             }
-            if (cancelled()) return 'cancelled';
-            const wasChanged = store.getState().scratchGui.projectChanged;
-            const putBack = async () => {
-                await loadQuietly(() => vm.loadProject(previous)).catch(() => {});
-                store.dispatch(wasChanged ? setProjectChanged() : setProjectUnchanged());
-            };
-            try {
-                vm.quit();
-                await loadQuietly(() => vm.loadProject(project));
-            } catch {
-                await putBack();
-                return cancelled() ? 'cancelled' : 'failed';
-            }
-            if (cancelled()) {
-                await putBack();
-                return 'cancelled';
-            }
-            vm.renderer.draw();
-            store.dispatch(setProjectChanged());
-            openedFileName = file.name;
-            return 'loaded';
         });
+    };
+    const replaceWithFile = async (file: File, project: ArrayBuffer, cancelled: () => boolean) => {
+        // A project that fails partway through loading can leave the VM half replaced. The backup is
+        // taken again if an edit came in while it was being made, so putting it back loses nothing.
+        let previous: ArrayBuffer | null = null;
+        try {
+            for (let attempt = 0; attempt < 3 && !previous; attempt++) {
+                const backup = await exportSb3WithVersion();
+                if (backup.version === editVersion) previous = backup.sb3;
+            }
+        } catch {
+            // reported as notReady below
+        }
+        if (cancelled()) return 'cancelled';
+        if (!previous) return 'notReady';
+        const backup = previous;
+        const wasChanged = store.getState().scratchGui.projectChanged;
+        const putBack = async () => {
+            await loadQuietly(() => vm.loadProject(backup)).catch(() => {});
+            store.dispatch(wasChanged ? setProjectChanged() : setProjectUnchanged());
+        };
+        try {
+            vm.quit();
+            await loadQuietly(() => vm.loadProject(project));
+        } catch {
+            await putBack();
+            return cancelled() ? 'cancelled' : 'failed';
+        }
+        if (cancelled()) {
+            await putBack();
+            return 'cancelled';
+        }
+        vm.renderer.draw();
+        editVersion++;
+        openedFileName = file.name;
+        // A project that was already changed raises no projectChanged of its own, but the site still has
+        // to learn that this is a different project to save.
+        const alreadyReported = lastChanged;
+        store.dispatch(setProjectChanged());
+        if (alreadyReported) sendEvent('projectChanged', {});
+        return 'loaded';
     };
     setProjectFileHandler(async file => {
         if (mode !== 'edit' || openingFile) return;
@@ -227,7 +277,7 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
         if (mode !== 'edit') return;
         const locale = store.getState().locales.locale;
         try {
-            saveFile(projectFileName(openedFileName, locale), await exportSb3());
+            saveFile(projectFileName(openedFileName, locale), await queueProject(exportSb3));
         } catch {
             alert(projectFileText(locale).saveFailed); // eslint-disable-line no-alert
         }
@@ -244,28 +294,34 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
         },
         loadProject: async ({sb3}) => {
             fileGeneration++;
-            await queueLoad(async () => {
+            await queueProject(async () => {
                 await loadQuietly(() => (sb3 === null ? loadEmptyProject() : vm.loadProject(sb3)));
                 store.dispatch(setProjectUnchanged());
+                exportedVersion = editVersion;
                 openedFileName = null;
             });
             return {payload: {}};
         },
         exportProject: async () => {
-            const sb3 = await exportSb3();
+            const {sb3, version} = await queueProject(exportSb3WithVersion);
+            exportedVersion = version;
             return {payload: {sb3}, transfer: [sb3]};
         },
-        captureStage: () => new Promise(resolve => {
+        captureStage: () => queueProject(() => new Promise(resolve => {
             vm.renderer.requestSnapshot(dataUri => {
                 const png = dataUriToBuffer(dataUri);
                 resolve({payload: {png}, transfer: [png]});
             });
             vm.renderer.draw();
-        }),
+        })),
         grade: async ({checks}) => {
-            // The snapshot: the project JSON and the sb3 are taken before anything awaits.
-            const json = vm.toJSON();
-            const sb3 = await exportSb3();
+            // The snapshot: the project JSON and the sb3 are taken before anything awaits. The site may
+            // save this sb3, so it counts as an export.
+            const {json, sb3, version} = await queueProject(async () => {
+                const snapshot = vm.toJSON();
+                return {json: snapshot, ...await exportSb3WithVersion()};
+            });
+            exportedVersion = version;
             try {
                 const {result, checkResults} = await grade(json, checks, createGradingRuntime(sb3));
                 return {payload: {result, checkResults, sb3}, transfer: [sb3]};
@@ -284,7 +340,11 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
         setSaveStatus: async ({status}) => {
             if (mode !== 'edit') throw new BridgeError('wrong_mode', `setSaveStatus in ${mode} mode`);
             setSaveState({status});
-            if (status === 'saved') store.dispatch(setProjectUnchanged());
+            if (status === 'saved') {
+                if (editVersion === exportedVersion) store.dispatch(setProjectUnchanged());
+                // The save was of an older version: the project stays changed and the site saves again.
+                else if (store.getState().scratchGui.projectChanged) sendEvent('projectChanged', {});
+            }
             return {payload: {}};
         }
     };

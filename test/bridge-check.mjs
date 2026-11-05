@@ -609,10 +609,78 @@ await attempt('23 지금 작품을 백업하지 못하면 안내하고, 다음 �
     }
 });
 
+// Holds the next file read, project backup or project load in the editor until releaseHeld().
+const holdNext = stage => editor.evaluate(st => {
+    const vm = window.ReduxStore.getState().scratchGui.vm;
+    const [owner, name] = st === 'read' ? [File.prototype, 'arrayBuffer'] :
+        [vm, st === 'backup' ? 'saveProjectSb3' : 'loadProject'];
+    const original = owner[name];
+    owner[name] = function (...args) {
+        owner[name] = original;
+        return new Promise((resolve, reject) => {
+            window.__studioHold = () => original.apply(this, args).then(resolve, reject);
+        });
+    };
+}, stage);
+const waitForHeld = () => editor.waitForFunction(() => Boolean(window.__studioHold), null, {timeout: 10000});
+const releaseHeld = () => editor.evaluate(() => {
+    const release = window.__studioHold;
+    delete window.__studioHold;
+    release();
+});
+const backToEdit = async () => {
+    await request('setMode', {mode: 'edit'});
+    await editor.waitForSelector('.blocklyWorkspace', {timeout: 30000});
+};
+
+await attempt('24 불러오는 도중 edit 모드를 벗어나면 취소, 작품과 변경 상태 유지 (읽기·백업·로드 중, view·player, 갔다 돌아와도)', async () => {
+    const sample = fs.readFileSync(path.join(out, 'sample.sb3'));
+    const moved = await editProject(sample, project => {
+        project.targets.find(t => !t.isStage).x = 123;
+    });
+    return withFileDialogs(async (pick, dialogs) => {
+        const run = async (stage, modes) => {
+            await sendBytes('loadProject', sample);
+            await vmEval(vm => vm.runtime.targets.find(t => t.isOriginal && !t.isStage).setXY(0, 0));
+            dialogs.length = 0;
+            await holdNext(stage);
+            await pick('moved.sb3', moved);
+            await waitForHeld();
+            for (const mode of modes) {
+                await request('setMode', {mode});
+                if (mode === 'edit') await editor.waitForSelector('.blocklyWorkspace', {timeout: 30000});
+            }
+            const menuHidden = modes.length === 0 || modes[modes.length - 1] === 'edit' ||
+                await editor.evaluate(() => !document.querySelector('[data-studio=file-menu]') &&
+                    !document.querySelector('[data-studio=save-button]'));
+            await releaseHeld();
+            await page.waitForTimeout(1500);
+            const result = {x: await spriteX(), changed: await projectChangedState(), dialogs: dialogs.length, menuHidden};
+            await backToEdit();
+            return result;
+        };
+        // The holds themselves let a file load when nothing else happens.
+        const control = await run('read', []);
+        const cases = {
+            'read → view': await run('read', ['view']),
+            'read → player': await run('read', ['player']),
+            'backup → view': await run('backup', ['view']),
+            'backup → player': await run('backup', ['player']),
+            'load → view': await run('load', ['view']),
+            'read → view → edit': await run('read', ['view', 'edit'])
+        };
+        assert(control.x === 123 && control.changed === true, `control: ${JSON.stringify(control)}`);
+        for (const [name, r] of Object.entries(cases)) {
+            assert(r.x === 0 && r.changed === false && r.dialogs === 1 && r.menuHidden, `${name}: ${JSON.stringify(r)}`);
+        }
+        return {control, ...cases};
+    });
+});
+
 await page.close();
 
 // Origin checks need pages on the origin that is not allowed.
-await attempt('24 허용되지 않은 출처에서는 임베드 자체가 막힘 (frame-ancestors)', async () => {
+await attempt('25 허용되지 않은 출처에서는 임베드 자체가 막힘 (frame-ancestors)', async () => {
     const bad = await context.newPage();
     await bad.goto('http://localhost:8603/');
     await bad.waitForTimeout(5000);
@@ -623,7 +691,7 @@ await attempt('24 허용되지 않은 출처에서는 임베드 자체가 막힘
     return {frames};
 });
 
-await attempt('25 허용되지 않은 출처의 메시지는 무시됨 (헤더 없이도)', async () => {
+await attempt('26 허용되지 않은 출처의 메시지는 무시됨 (헤더 없이도)', async () => {
     const bad = await context.newPage();
     await bad.goto('http://localhost:8603/?editor=http://localhost:8604');
     const frame = () => bad.frames().find(f => f.url().startsWith('http://localhost:8604'));

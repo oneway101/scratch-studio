@@ -775,10 +775,40 @@ await attempt('27 바뀐 작품을 파일로 바꿔도 projectChanged, 이전 �
     });
 });
 
+await attempt('28 사이트가 작품을 여는 도중 컴퓨터에 저장하면 파일 이름과 내용이 같은 작품에서 옴', async () => {
+    const sample = fs.readFileSync(path.join(out, 'sample.sb3'));
+    const siteProject = await editProject(sample, project => {
+        project.targets.find(t => !t.isStage).x = 123;
+    });
+    return withFileDialogs(async pick => {
+        await sendBytes('loadProject', sample);
+        await pick('A.sb3', sample);
+        await page.waitForTimeout(1500);
+        // The site opens its project; the load is held after the VM cleared the file's project.
+        await holdNext('install');
+        await page.evaluate(b => {
+            window.__siteLoad = window.host.request('loadProject', {sb3: new Uint8Array(b).buffer});
+        }, Array.from(siteProject));
+        await waitForHeld();
+        await editor.click('[data-studio=file-menu]');
+        const download = page.waitForEvent('download');
+        await editor.click('[data-studio=file-save]');
+        await page.waitForTimeout(500);
+        await releaseHeld();
+        await page.evaluate(() => window.__siteLoad);
+        const file = await download;
+        const zip = await JSZip.loadAsync(fs.readFileSync(await file.path()));
+        const project = JSON.parse(await zip.file('project.json').async('string'));
+        const saved = {name: file.suggestedFilename(), x: project.targets.find(t => !t.isStage).x};
+        assert(saved.name === '내 작품.sb3' && saved.x === 123, `saved: ${JSON.stringify(saved)}`);
+        return saved;
+    });
+});
+
 await page.close();
 
 // Origin checks need pages on the origin that is not allowed.
-await attempt('28 허용되지 않은 출처에서는 임베드 자체가 막힘 (frame-ancestors)', async () => {
+await attempt('29 허용되지 않은 출처에서는 임베드 자체가 막힘 (frame-ancestors)', async () => {
     const bad = await context.newPage();
     await bad.goto('http://localhost:8603/');
     await bad.waitForTimeout(5000);
@@ -789,7 +819,7 @@ await attempt('28 허용되지 않은 출처에서는 임베드 자체가 막힘
     return {frames};
 });
 
-await attempt('29 허용되지 않은 출처의 메시지는 무시됨 (헤더 없이도)', async () => {
+await attempt('30 허용되지 않은 출처의 메시지는 무시됨 (헤더 없이도)', async () => {
     const bad = await context.newPage();
     await bad.goto('http://localhost:8603/?editor=http://localhost:8604');
     const frame = () => bad.frames().find(f => f.url().startsWith('http://localhost:8604'));

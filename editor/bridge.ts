@@ -277,7 +277,12 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
         if (mode !== 'edit') return;
         const locale = store.getState().locales.locale;
         try {
-            saveFile(projectFileName(openedFileName, locale), await queueProject(exportSb3));
+            // The name and the project come from the same turn in the queue, after any load before it.
+            const {name, sb3} = await queueProject(async () => ({
+                name: projectFileName(openedFileName, locale),
+                sb3: await exportSb3()
+            }));
+            saveFile(name, sb3);
         } catch {
             alert(projectFileText(locale).saveFailed); // eslint-disable-line no-alert
         }

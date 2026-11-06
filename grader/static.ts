@@ -77,18 +77,20 @@ interface BlockPattern {
 
 const inputPatterns = (rule: string, value: unknown, depth = 0): BlockPattern['inputs'] => {
     if (value === undefined) return [];
-    if (depth > 32) throw new GraderError(`${rule}: nested inputs exceed 32 levels`);
     if (typeof value !== 'object' || value === null || Array.isArray(value)) {
         throw new GraderError(`${rule}: inputs must be an object`);
     }
     return Object.entries(value).map(([name, spec]) => {
         if (typeof spec === 'object' && spec !== null && 'block' in spec) {
+            if (depth >= 32) throw new GraderError(`${rule}: nested inputs exceed 32 levels`);
             if (Object.keys(spec).length !== 1) throw new GraderError(`${rule}: block input cannot have other options`);
             const block = (spec as {block: unknown}).block;
             if (typeof block !== 'object' || block === null || Array.isArray(block) ||
                 !('opcode' in block) || typeof block.opcode !== 'string' || !block.opcode) {
                 throw new GraderError(`${rule}: input block needs an opcode`);
             }
+            const unknown = Object.keys(block).find(key => !['opcode', 'fields', 'inputs'].includes(key));
+            if (unknown !== undefined) throw new GraderError(`${rule}: unknown input block property: ${unknown}`);
             const pattern = block as {opcode: string; fields?: unknown; inputs?: unknown};
             return [name, {block: {opcode: pattern.opcode, fields: toConditions(rule, 'fields', pattern.fields),
                 inputs: inputPatterns(rule, pattern.inputs, depth + 1)}}];

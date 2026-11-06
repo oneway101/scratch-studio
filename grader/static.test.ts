@@ -436,6 +436,37 @@ describe('nested input block patterns', () => {
         expect(passes(p, check('notHasBlock', pattern))).toBe(false);
     });
 
+    it('rejects unknown nested block properties instead of dropping constraints', () => {
+        const p = project([], {scripts: [[flag(), until('Other', 5)]]});
+        const withVariable = (property: string) => ({opcode: 'control_repeat_until', inputs: {CONDITION: {block: {
+            opcode: 'operator_equals', inputs: {
+                OPERAND1: {block: {opcode: 'data_variable', [property]: {VARIABLE: 'Counter'}}}
+            }
+        }}}});
+        expect(passes(p, check('hasBlock', withVariable('fields')))).toBe(false);
+        for (const property of ['field', 'input', 'unexpected']) {
+            for (const c of [
+                check('hasBlock', withVariable(property)),
+                check('notHasBlock', withVariable(property)),
+                check('blockCount', {...withVariable(property), min: 1}),
+                check('sequence', {blocks: [withVariable(property)]})
+            ]) {
+                expect(() => passes(p, c)).toThrow(GraderError);
+                expect(() => passes(p, c)).toThrow(`unknown input block property: ${property}`);
+            }
+        }
+    });
+
+    it.each([false, true])('enforces 32 nested blocks with terminal inputs present: %s', emptyInputs => {
+        const nested = (depth: number) => {
+            let block: Record<string, unknown> = {opcode: 'operator_not', ...(emptyInputs ? {inputs: {}} : {})};
+            for (let i = 1; i < depth; i++) block = {opcode: 'operator_not', inputs: {OPERAND: {block}}};
+            return check('hasBlock', {opcode: 'control_if', inputs: {CONDITION: {block}}});
+        };
+        for (const depth of [31, 32]) expect(() => passes(arrowKeys, nested(depth))).not.toThrow();
+        expect(() => passes(arrowKeys, nested(33))).toThrow('32 levels');
+    });
+
     it('rejects malformed nested specifications instead of ignoring them', () => {
         for (const block of [null, [], {}, {opcode: 1}]) {
             expect(() => passes(arrowKeys, check('hasBlock', {opcode: 'control_if', inputs: {CONDITION: {block}}})))

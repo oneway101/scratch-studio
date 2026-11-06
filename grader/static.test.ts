@@ -382,3 +382,70 @@ describe('gradeStatic', () => {
         expect(() => gradeStatic('{}', [])).toThrow(GraderError);
     });
 });
+
+describe('nested input block patterns', () => {
+    const until = (variable: string, limit: number) => b('control_repeat_until', {
+        inputs: {CONDITION: b('operator_equals', {inputs: {OPERAND1: {variable}, OPERAND2: limit}})},
+        substack: [b('control_wait', {inputs: {DURATION: 1}})]
+    });
+    const pattern = {opcode: 'control_repeat_until', inputs: {CONDITION: {block: {
+        opcode: 'operator_equals', inputs: {
+            OPERAND1: {block: {opcode: 'data_variable', fields: {VARIABLE: {ko: '횟수', en: 'Counter'}}}},
+            OPERAND2: 5
+        }
+    }}}};
+    const rule = check('hasBlock', pattern);
+
+    it('matches the connected comparison, including compressed variable reporters and localized names', () => {
+        for (const name of ['횟수', 'Counter']) {
+            expect(passes(project([], {scripts: [[flag(), until(name, 5)]]}), rule)).toBe(true);
+        }
+    });
+
+    it('rejects a wrong comparison value or a different variable', () => {
+        expect(passes(project([], {scripts: [[flag(), until('Counter', 6)]]}), rule)).toBe(false);
+        expect(passes(project([], {scripts: [[flag(), until('Other', 5)]]}), rule)).toBe(false);
+    });
+
+    it('ignores a matching comparison in another script or another input', () => {
+        const decoy = b('control_if', {inputs: {CONDITION: b('operator_equals', {
+            inputs: {OPERAND1: {variable: 'Counter'}, OPERAND2: 5}
+        })}});
+        expect(passes(project([], {scripts: [[flag(), until('Counter', 6)], [flag(), decoy]]}), rule)).toBe(false);
+        expect(passes(project([], {scripts: [[flag(), b('control_if', {inputs: {CONDITION: until('Counter', 5)}})]]}),
+            check('hasBlock', {opcode: 'control_if', inputs: {SUBSTACK: {block: pattern}}}))).toBe(false);
+    });
+
+    it('matches a nested condition on the same block in a sequence', () => {
+        const sequence = check('sequence', {blocks: [{opcode: 'event_whenflagclicked'}, pattern, {opcode: 'looks_hide'}]});
+        expect(passes(project([], {scripts: [[flag(), until('Counter', 5), b('looks_hide')]]}), sequence)).toBe(true);
+        expect(passes(project([], {scripts: [[flag(), until('Counter', 6), b('looks_hide')],
+            [whenKey('space'), until('Counter', 5)]]}), sequence)).toBe(false);
+    });
+
+    it('never falls back to the covered literal or a missing input', () => {
+        const number = check('hasBlock', {opcode: 'motion_changexby', inputs: {DX: {block: {opcode: 'data_variable'}}}});
+        expect(passes(project([sprite('Actor', [[flag(), b('motion_changexby', {inputs: {DX: 5}})]])]), number)).toBe(false);
+        expect(passes(project([sprite('Actor', [[flag(), b('motion_changexby')]])]), number)).toBe(false);
+        expect(passes(project([sprite('Actor', [[flag(), b('motion_changexby', {inputs: {DX: {variable: 'Counter'}}})]])]), number)).toBe(true);
+    });
+
+    it('also filters notHasBlock and blockCount', () => {
+        const p = project([], {scripts: [[flag(), until('Counter', 5), until('Counter', 6)]]});
+        expect(passes(p, check('blockCount', {...pattern, min: 1, max: 1}))).toBe(true);
+        expect(passes(p, check('notHasBlock', pattern))).toBe(false);
+    });
+
+    it('rejects malformed nested specifications instead of ignoring them', () => {
+        for (const block of [null, [], {}, {opcode: 1}]) {
+            expect(() => passes(arrowKeys, check('hasBlock', {opcode: 'control_if', inputs: {CONDITION: {block}}})))
+                .toThrow(GraderError);
+        }
+        expect(() => passes(arrowKeys, check('hasBlock', {opcode: 'control_if',
+            inputs: {CONDITION: {block: {opcode: 'operator_equals'}, op: 'eq'}}}))).toThrow(GraderError);
+        const recursive: Record<string, unknown> = {opcode: 'operator_not'};
+        recursive.inputs = {OPERAND: {block: recursive}};
+        expect(() => passes(arrowKeys, check('hasBlock', {opcode: 'control_if', inputs: {CONDITION: {block: recursive}}})))
+            .toThrow('32 levels');
+    });
+});

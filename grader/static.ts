@@ -72,13 +72,40 @@ const conditions = (check: StaticCheck, name: 'fields' | 'inputs'): [string, Con
 interface BlockPattern {
     opcode: string | undefined;
     fields: [string, Condition][];
-    inputs: [string, Condition][];
+    inputs: [string, Condition | {block: BlockPattern}][];
 }
+
+const inputPatterns = (rule: string, value: unknown, depth = 0): BlockPattern['inputs'] => {
+    if (value === undefined) return [];
+    if (depth > 32) throw new GraderError(`${rule}: nested inputs exceed 32 levels`);
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        throw new GraderError(`${rule}: inputs must be an object`);
+    }
+    return Object.entries(value).map(([name, spec]) => {
+        if (typeof spec === 'object' && spec !== null && 'block' in spec) {
+            if (Object.keys(spec).length !== 1) throw new GraderError(`${rule}: block input cannot have other options`);
+            const block = (spec as {block: unknown}).block;
+            if (typeof block !== 'object' || block === null || Array.isArray(block) ||
+                !('opcode' in block) || typeof block.opcode !== 'string' || !block.opcode) {
+                throw new GraderError(`${rule}: input block needs an opcode`);
+            }
+            const pattern = block as {opcode: string; fields?: unknown; inputs?: unknown};
+            return [name, {block: {opcode: pattern.opcode, fields: toConditions(rule, 'fields', pattern.fields),
+                inputs: inputPatterns(rule, pattern.inputs, depth + 1)}}];
+        }
+        return [name, toConditions(rule, 'inputs', {[name]: spec})[0][1]];
+    });
+};
 
 const fits = (target: Target, block: Block, pattern: BlockPattern): boolean =>
     (pattern.opcode === undefined || block.opcode === pattern.opcode) &&
     pattern.fields.every(([name, condition]) => matches(fieldValue(target, block, name), condition)) &&
     pattern.inputs.every(([name, condition]) => {
+        if ('block' in condition) {
+            const id = block.inputs[name]?.block;
+            const child = id === undefined ? undefined : target.blocks.get(id);
+            return child !== undefined && fits(target, child, condition.block);
+        }
         const value = inputValue(block, name);
         return value !== undefined && matches(value, condition);
     });
@@ -86,14 +113,16 @@ const fits = (target: Target, block: Block, pattern: BlockPattern): boolean =>
 /** Blocks with the opcode, and the given dropdown and input values, in the selected targets. */
 const findBlocks = (check: StaticCheck, targets: Target[], opcode: string | undefined): Block[] => {
     const includeDetached = option<boolean>(check, 'includeDetached', 'boolean', false) ?? false;
-    const pattern = {opcode, fields: conditions(check, 'fields'), inputs: conditions(check, 'inputs')};
+    const pattern = {opcode, fields: conditions(check, 'fields'), inputs: inputPatterns(check.rule, check.inputs)};
     return targets.flatMap(target => countedBlocks(target, includeDetached).filter(block => fits(target, block, pattern)));
 };
 
-const describeFilters = (fields: [string, Condition][], inputs: [string, Condition][]): string =>
-    [...fields, ...inputs].map(([name, condition]) => ` [${name} ${describeCondition(condition)}]`).join('');
+const describeFilters = (fields: [string, Condition][], inputs: BlockPattern['inputs']): string =>
+    [...fields, ...inputs].map(([name, condition]) => ` [${name} ${'block' in condition ?
+        `${condition.block.opcode}${describeFilters(condition.block.fields, condition.block.inputs)}` :
+        describeCondition(condition)}]`).join('');
 
-const filters = (check: StaticCheck): string => describeFilters(conditions(check, 'fields'), conditions(check, 'inputs'));
+const filters = (check: StaticCheck): string => describeFilters(conditions(check, 'fields'), inputPatterns(check.rule, check.inputs));
 
 /**
  * What each block of a sequence must be: `opcodes` gives only the opcodes, `blocks` also the
@@ -112,7 +141,7 @@ const sequencePatterns = (check: StaticCheck): BlockPattern[] => {
             throw new GraderError('sequence: each of blocks needs an opcode');
         }
         const {opcode, fields, inputs} = item as {opcode: string; fields?: unknown; inputs?: unknown};
-        return {opcode, fields: toConditions('sequence', 'fields', fields), inputs: toConditions('sequence', 'inputs', inputs)};
+        return {opcode, fields: toConditions('sequence', 'fields', fields), inputs: inputPatterns('sequence', inputs)};
     });
 };
 

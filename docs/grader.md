@@ -65,7 +65,18 @@
 - 스크래치처럼 양쪽이 숫자면 숫자로, 아니면 대소문자 구분 없이 글자로 비교한다(`"10"`과 `10`은 같다).
 - `{ "ko": "점수", "en": "score" }`처럼 언어별 값을 주면 둘 중 하나와 맞으면 된다.
 - 드롭다운이 블록에 딸린 메뉴에 있는 경우(예: `sensing_keypressed`의 `KEY_OPTION`, `sound_play`의 `SOUND_MENU`, `event_broadcast`의 `BROADCAST_INPUT`)도 같은 이름으로 비교한다.
-- 칸에 다른 블록을 끼웠으면 입력한 값이 없는 것으로 보고 `inputs` 조건은 맞지 않는다.
+- 숫자·글자 비교는 칸에 블록을 끼웠으면 맞지 않는다. 덮인 그림자 값으로 대신 비교하지 않는다.
+- 끼운 블록 자체를 보려면 `inputs: {입력명: {block: {opcode, fields, inputs}}}`를 쓴다. 지정한 입력 칸의 실제 블록만 비교하며, 그 블록의 입력도 같은 형식으로 검사한다. 변수 리포터는 `opcode: "data_variable"`, `fields: {VARIABLE: 이름}`이다. 압축 저장된 변수도 읽으며 언어별 이름을 허용한다. 최대 깊이는 32다. `hasBlock`·`notHasBlock`·`blockCount`·`sequence.blocks`에서 사용할 수 있다.
+
+예를 들어 다음 규칙은 반복 블록의 조건 칸에 `Counter = 5`가 연결된 경우만 통과한다. 다른 스크립트에 같은 비교를 추가해도 통과하지 않는다.
+
+```json
+{ "type": "static", "rule": "hasBlock", "opcode": "control_repeat_until",
+  "inputs": { "CONDITION": { "block": { "opcode": "operator_equals", "inputs": {
+    "OPERAND1": { "block": { "opcode": "data_variable", "fields": { "VARIABLE": "Counter" } } },
+    "OPERAND2": 5
+  } } } } }
+```
 
 ### `sequence`의 순서
 

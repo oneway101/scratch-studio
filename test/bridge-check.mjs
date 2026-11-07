@@ -134,11 +134,16 @@ await attempt('05 loadProject: 고친 sb3 열기, 열고 나면 바뀌지 않은
     const modified = await addScript(original);
     fs.writeFileSync(path.join(out, 'sample.sb3'), modified);
     await sendBytes('loadProject', modified);
+    // Again over a project that has blocks: Blockly's delete and create events come after the load.
+    await clearEvents();
+    await sendBytes('loadProject', modified);
+    await page.waitForTimeout(500);
     const ops = await opcodes();
     const changed = await editor.evaluate(() => window.ReduxStore.getState().scratchGui.projectChanged);
+    const events = (await eventsOf('projectChanged')).length;
     assert(ops.includes('event_whenkeypressed'), 'script missing');
-    assert(changed === false, 'projectChanged should be false after load');
-    return {opcodes: ops, changed};
+    assert(changed === false && events === 0, `projectChanged after load: state=${changed} events=${events}`);
+    return {opcodes: ops, changed, projectChangedEvents: events};
 });
 
 await attempt('06 loadProject: sb3 null이면 빈 프로젝트', async () => {
@@ -188,7 +193,8 @@ await attempt('09 setMode: 편집 / 실행 전용 / 블록 보기 전환, 작품
     const count = () => editor.evaluate(() => ({
         workspace: document.querySelectorAll('.blocklyWorkspace').length,
         stage: document.querySelectorAll('canvas').length,
-        saveUi: document.querySelectorAll('[data-studio=save]').length
+        saveUi: document.querySelectorAll('[data-studio=save]').length,
+        fileUi: document.querySelectorAll('[data-studio=file-menu]').length
     }));
     const edit = await count();
     await request('setMode', {mode: 'player'});
@@ -203,9 +209,9 @@ await attempt('09 setMode: 편집 / 실행 전용 / 블록 보기 전환, 작품
     await request('setMode', {mode: 'edit'});
     await editor.waitForSelector('.blocklyWorkspace', {timeout: 30000});
     const kept = (await opcodes()).includes('event_whenkeypressed');
-    assert(edit.workspace > 0 && edit.saveUi === 1, 'edit mode wrong');
-    assert(player.workspace === 0 && player.stage > 0 && player.saveUi === 0, 'player mode wrong');
-    assert(view.workspace > 0 && view.saveUi === 0, 'view mode wrong');
+    assert(edit.workspace > 0 && edit.saveUi === 1 && edit.fileUi === 1, 'edit mode wrong');
+    assert(player.workspace === 0 && player.stage > 0 && player.saveUi === 0 && player.fileUi === 0, 'player mode wrong');
+    assert(view.workspace > 0 && view.saveUi === 0 && view.fileUi === 0, 'view mode wrong');
     assert(kept, 'project lost when switching modes');
     return {edit, player, view, scriptsKept: kept};
 });
@@ -371,10 +377,438 @@ await attempt('19 스프라이트·소리·배경 라이브러리의 요청 서�
     return {sprite, backdrop, sound};
 });
 
+await attempt('20 작품 파일 불러오기: 파일 메뉴와 끌어다 놓기, 불러오면 바뀐 상태, edit 모드에서만', async () => {
+    const dialogs = [];
+    let answer = true;
+    const onDialog = dialog => {
+        dialogs.push(dialog.message());
+        (answer ? dialog.accept() : dialog.dismiss()).catch(() => {});
+    };
+    page.on('dialog', onDialog);
+    const sample = fs.readFileSync(path.join(out, 'sample.sb3'));
+    const fromFile = await editProject(sample, project => {
+        project.targets.find(t => !t.isStage).blocks.f1 = {opcode: 'looks_show', next: null, parent: null,
+            inputs: {}, fields: {}, shadow: false, topLevel: true, x: 40, y: 200};
+    });
+    const hasMarker = async () => (await opcodes()).includes('looks_show');
+    const changed = () => editor.evaluate(() => window.ReduxStore.getState().scratchGui.projectChanged);
+    const reset = () => sendBytes('loadProject', sample);
+    const pick = async (name, bytes) => {
+        await editor.click('[data-studio=file-menu]');
+        const chooser = page.waitForEvent('filechooser');
+        await editor.click('[data-studio=file-load]');
+        await (await chooser).setFiles({name, mimeType: 'application/x.scratch.sb3', buffer: bytes});
+        await page.waitForTimeout(1500);
+    };
+    // A synthetic drag of a file over the code area, as the browser does for a real one.
+    const drop = async (name, bytes) => {
+        const overlay = await editor.evaluate(([n, b]) => {
+            const transfer = new DataTransfer();
+            transfer.items.add(new File([new Uint8Array(b)], n));
+            const target = document.querySelector('.blocklyWorkspace');
+            target.dispatchEvent(new DragEvent('dragover', {bubbles: true, cancelable: true, dataTransfer: transfer}));
+            const shown = document.querySelector('[data-studio=project-drop]').style.display === 'flex';
+            target.dispatchEvent(new DragEvent('drop', {bubbles: true, cancelable: true, dataTransfer: transfer}));
+            return shown;
+        }, [name, Array.from(bytes)]);
+        await page.waitForTimeout(1500);
+        return overlay;
+    };
+    try {
+        await reset();
+        await clearEvents();
+        answer = false;
+        await pick('game.sb3', fromFile);
+        const declined = {loaded: await hasMarker(), changed: await changed()};
+
+        answer = true;
+        await pick('game.sb3', fromFile);
+        await page.waitForFunction(() => window.host.events.some(e => e.type === 'projectChanged'), null, {timeout: 5000});
+        const button = {loaded: await hasMarker(), changed: await changed()};
+
+        await reset();
+        const overlay = await drop('game.sb3', fromFile);
+        const dropped = {loaded: await hasMarker(), changed: await changed(), overlay};
+
+        await reset();
+        dialogs.length = 0;
+        await drop('cat.png', fromFile);
+        const notProject = {loaded: await hasMarker(), dialogs: [...dialogs]};
+
+        dialogs.length = 0;
+        await drop('evil.sb3', await addCustomExtension(sample));
+        const broken = {kept: (await opcodes()).includes('event_whenkeypressed'), changed: await changed(),
+            dialogs: [...dialogs]};
+
+        await request('setMode', {mode: 'view'});
+        await editor.waitForSelector('.blocklyWorkspace', {timeout: 30000});
+        dialogs.length = 0;
+        await drop('game.sb3', fromFile);
+        const inView = {loaded: await hasMarker(), dialogs: dialogs.length};
+        await request('setMode', {mode: 'edit'});
+        await editor.waitForSelector('.blocklyWorkspace', {timeout: 30000});
+
+        assert(!declined.loaded && !declined.changed, `declined: ${JSON.stringify(declined)}`);
+        assert(button.loaded && button.changed, `button: ${JSON.stringify(button)}`);
+        assert(dropped.loaded && dropped.changed && dropped.overlay, `drop: ${JSON.stringify(dropped)}`);
+        assert(!notProject.loaded && notProject.dialogs.length === 1, `not a project: ${JSON.stringify(notProject)}`);
+        assert(broken.kept && !broken.changed && broken.dialogs.length === 2, `broken: ${JSON.stringify(broken)}`);
+        assert(!inView.loaded && inView.dialogs === 0, `view mode: ${JSON.stringify(inView)}`);
+        return {declined, button, dropped, notProject, broken, inView};
+    } finally {
+        page.off('dialog', onDialog);
+        await reset();
+        await request('setSaveStatus', {status: 'saved'});
+    }
+});
+
+await attempt('21 컴퓨터에 저장하기: 파일 메뉴로 sb3 다운로드, 연 파일 이름을 이어 씀, 사이트 저장 상태는 그대로', async () => {
+    const onDialog = dialog => dialog.accept().catch(() => {});
+    page.on('dialog', onDialog);
+    const sample = fs.readFileSync(path.join(out, 'sample.sb3'));
+    const save = async () => {
+        await editor.click('[data-studio=file-menu]');
+        const download = page.waitForEvent('download');
+        await editor.click('[data-studio=file-save]');
+        const file = await download;
+        const zip = await JSZip.loadAsync(fs.readFileSync(await file.path()));
+        const project = JSON.parse(await zip.file('project.json').async('string'));
+        const ops = Object.values(project.targets.find(t => !t.isStage).blocks).map(b => b.opcode);
+        return {name: file.suggestedFilename(), hasScript: ops.includes('event_whenkeypressed')};
+    };
+    try {
+        await sendBytes('loadProject', sample);
+        await clearEvents();
+        const fromSite = await save();
+        const changed = await editor.evaluate(() => window.ReduxStore.getState().scratchGui.projectChanged);
+        const events = await page.evaluate(() => window.host.events.map(e => e.type));
+        const status = await editor.evaluate(() => document.querySelector('[data-studio=save-status]').textContent);
+
+        await editor.click('[data-studio=file-menu]');
+        const chooser = page.waitForEvent('filechooser');
+        await editor.click('[data-studio=file-load]');
+        await (await chooser).setFiles({name: '우리 게임.sb2', mimeType: 'application/octet-stream', buffer: sample});
+        await page.waitForTimeout(1500);
+        const fromFile = await save();
+
+        assert(fromSite.name === '내 작품.sb3' && fromSite.hasScript, `from site: ${JSON.stringify(fromSite)}`);
+        assert(!changed && events.length === 0 && status === '저장됨', `site state: ${changed} ${events} ${status}`);
+        assert(fromFile.name === '우리 게임.sb3' && fromFile.hasScript, `from file: ${JSON.stringify(fromFile)}`);
+        return {fromSite, fromFile, siteEvents: events, saveStatus: status};
+    } finally {
+        page.off('dialog', onDialog);
+        await sendBytes('loadProject', sample);
+        await request('setSaveStatus', {status: 'saved'});
+    }
+});
+
+// Opens a file through the File menu, with confirm and alert answered and recorded.
+const withFileDialogs = async fn => {
+    const dialogs = [];
+    const onDialog = dialog => {
+        dialogs.push(dialog.message());
+        dialog.accept().catch(() => {});
+    };
+    page.on('dialog', onDialog);
+    const pick = async (name, bytes) => {
+        await editor.click('[data-studio=file-menu]');
+        const chooser = page.waitForEvent('filechooser');
+        await editor.click('[data-studio=file-load]');
+        await (await chooser).setFiles({name, mimeType: 'application/x.scratch.sb3', buffer: bytes});
+    };
+    try {
+        return await fn(pick, dialogs);
+    } finally {
+        page.off('dialog', onDialog);
+        await sendBytes('loadProject', fs.readFileSync(path.join(out, 'sample.sb3')));
+        await request('setSaveStatus', {status: 'saved'});
+    }
+};
+const spriteX = () => vmEval(vm => vm.runtime.targets.find(t => t.isOriginal && !t.isStage).x);
+const projectChangedState = () => editor.evaluate(() => window.ReduxStore.getState().scratchGui.projectChanged);
+// Holds the next File.arrayBuffer() in the editor until the check settles it.
+const holdFileRead = () => editor.evaluate(() => {
+    const original = File.prototype.arrayBuffer;
+    File.prototype.arrayBuffer = function () {
+        File.prototype.arrayBuffer = original;
+        return new Promise((resolve, reject) => {
+            window.__studioRead = {resolve: () => original.call(this).then(resolve, reject), reject};
+        });
+    };
+});
+const waitForHeldRead = () => editor.waitForFunction(() => Boolean(window.__studioRead), null, {timeout: 10000});
+const settleHeldRead = how => editor.evaluate(h => {
+    const read = window.__studioRead;
+    delete window.__studioRead;
+    if (h === 'fail') read.reject(new Error('read failed'));
+    else read.resolve();
+}, how);
+
+await attempt('22 파일을 읽는 동안 사이트가 작품을 열면 사이트 작품이 남음 (읽기 실패, 읽기 성공 모두)', async () => {
+    const sample = fs.readFileSync(path.join(out, 'sample.sb3'));
+    return withFileDialogs(async (pick, dialogs) => {
+        const run = async how => {
+            await sendBytes('loadProject', sample);
+            await vmEval(vm => vm.runtime.targets.find(t => t.isOriginal && !t.isStage).setXY(123, 0));
+            dialogs.length = 0;
+            await holdFileRead();
+            await pick('game.sb3', sample);
+            await waitForHeldRead();
+            await request('loadProject', {sb3: null});
+            await settleHeldRead(how);
+            await page.waitForTimeout(1500);
+            return {x: await spriteX(), blocks: (await opcodes()).length, changed: await projectChangedState(),
+                dialogs: dialogs.length};
+        };
+        const readFails = await run('fail');
+        const readSucceeds = await run('succeed');
+        // The site's empty project: x 0, no blocks, unchanged. Only the confirm dialog, no error.
+        for (const r of [readFails, readSucceeds]) {
+            assert(r.x === 0 && r.blocks === 0 && r.changed === false && r.dialogs === 1, JSON.stringify(r));
+        }
+        return {readFails, readSucceeds};
+    });
+});
+
+await attempt('23 지금 작품을 백업하지 못하면 안내하고, 다음 불러오기는 다시 됨', async () => {
+    const sample = fs.readFileSync(path.join(out, 'sample.sb3'));
+    const marked = await editProject(sample, project => {
+        project.targets.find(t => !t.isStage).blocks.m1 = {opcode: 'looks_hide', next: null, parent: null,
+            inputs: {}, fields: {}, shadow: false, topLevel: true, x: 40, y: 260};
+    });
+    const errors = [];
+    const onError = error => errors.push(String(error.message || error));
+    page.on('pageerror', onError);
+    try {
+        return await withFileDialogs(async (pick, dialogs) => {
+            await sendBytes('loadProject', sample);
+            await vmEval(vm => {
+                const original = vm.saveProjectSb3;
+                vm.saveProjectSb3 = function () {
+                    vm.saveProjectSb3 = original;
+                    return Promise.reject(new Error('backup failed'));
+                };
+            });
+            await pick('game.sb3', marked);
+            await page.waitForTimeout(1500);
+            const failed = {loaded: (await opcodes()).includes('looks_hide'), changed: await projectChangedState(),
+                dialogs: [...dialogs]};
+            dialogs.length = 0;
+            await pick('game.sb3', marked);
+            await page.waitForTimeout(1500);
+            const retried = {loaded: (await opcodes()).includes('looks_hide'), changed: await projectChangedState(),
+                dialogs: [...dialogs]};
+            assert(!failed.loaded && !failed.changed && failed.dialogs.length === 2 && /다시 시도/.test(failed.dialogs[1]),
+                `backup failure: ${JSON.stringify(failed)}`);
+            assert(retried.loaded && retried.changed && retried.dialogs.length === 1, `retry: ${JSON.stringify(retried)}`);
+            assert(errors.length === 0, `page errors: ${errors.join(' / ')}`);
+            return {failed, retried};
+        });
+    } finally {
+        page.off('pageerror', onError);
+    }
+});
+
+// Holds the next file read, project backup or project load in the editor until releaseHeld().
+const holdNext = stage => editor.evaluate(st => {
+    const vm = window.ReduxStore.getState().scratchGui.vm;
+    // install: inside vm.loadProject, after the old project is cleared and before the new one is in.
+    const [owner, name] = st === 'read' ? [File.prototype, 'arrayBuffer'] :
+        [vm, {backup: 'saveProjectSb3', load: 'loadProject', install: 'installTargets'}[st]];
+    const original = owner[name];
+    owner[name] = function (...args) {
+        owner[name] = original;
+        // The VM takes the project for a backup when it is called; only the compressing is held.
+        const started = st === 'backup' ? original.apply(this, args) : null;
+        return new Promise((resolve, reject) => {
+            window.__studioHold = () => (started || original.apply(this, args)).then(resolve, reject);
+        });
+    };
+}, stage);
+const waitForHeld = () => editor.waitForFunction(() => Boolean(window.__studioHold), null, {timeout: 10000});
+const releaseHeld = () => editor.evaluate(() => {
+    const release = window.__studioHold;
+    delete window.__studioHold;
+    release();
+});
+const backToEdit = async () => {
+    await request('setMode', {mode: 'edit'});
+    await editor.waitForSelector('.blocklyWorkspace', {timeout: 30000});
+};
+
+await attempt('24 불러오는 도중 edit 모드를 벗어나면 취소, 작품과 변경 상태 유지 (읽기·백업·로드 중, view·player, 갔다 돌아와도)', async () => {
+    const sample = fs.readFileSync(path.join(out, 'sample.sb3'));
+    const moved = await editProject(sample, project => {
+        project.targets.find(t => !t.isStage).x = 123;
+    });
+    return withFileDialogs(async (pick, dialogs) => {
+        const run = async (stage, modes) => {
+            await sendBytes('loadProject', sample);
+            await vmEval(vm => vm.runtime.targets.find(t => t.isOriginal && !t.isStage).setXY(0, 0));
+            dialogs.length = 0;
+            await holdNext(stage);
+            await pick('moved.sb3', moved);
+            await waitForHeld();
+            for (const mode of modes) {
+                await request('setMode', {mode});
+                if (mode === 'edit') await editor.waitForSelector('.blocklyWorkspace', {timeout: 30000});
+            }
+            const menuHidden = modes.length === 0 || modes[modes.length - 1] === 'edit' ||
+                await editor.evaluate(() => !document.querySelector('[data-studio=file-menu]') &&
+                    !document.querySelector('[data-studio=save-button]'));
+            await releaseHeld();
+            await page.waitForTimeout(1500);
+            const result = {x: await spriteX(), changed: await projectChangedState(), dialogs: dialogs.length, menuHidden};
+            await backToEdit();
+            return result;
+        };
+        // The holds themselves let a file load when nothing else happens.
+        const control = await run('read', []);
+        const cases = {
+            'read → view': await run('read', ['view']),
+            'read → player': await run('read', ['player']),
+            'backup → view': await run('backup', ['view']),
+            'backup → player': await run('backup', ['player']),
+            'load → view': await run('load', ['view']),
+            'read → view → edit': await run('read', ['view', 'edit'])
+        };
+        assert(control.x === 123 && control.changed === true, `control: ${JSON.stringify(control)}`);
+        for (const [name, r] of Object.entries(cases)) {
+            assert(r.x === 0 && r.changed === false && r.dialogs === 1 && r.menuHidden, `${name}: ${JSON.stringify(r)}`);
+        }
+        return {control, ...cases};
+    });
+});
+
+const spriteName = () => vmEval(vm => vm.runtime.targets.find(t => t.isOriginal && !t.isStage).getName());
+
+await attempt('25 백업하는 동안 한 편집은 불러오기가 실패해도 남음, 그동안 에디터는 잠김', async () => {
+    const sample = fs.readFileSync(path.join(out, 'sample.sb3'));
+    const evil = await addCustomExtension(sample);
+    return withFileDialogs(async (pick, dialogs) => {
+        await sendBytes('loadProject', sample);
+        const before = await spriteName();
+        dialogs.length = 0;
+        await holdNext('backup');
+        await pick('evil.sb3', evil);
+        await waitForHeld();
+        const locked = await editor.evaluate(() => window.ReduxStore.getState().scratchGui.modals.loadingProject);
+        // An edit the VM takes after the backup started, as a drag that ends on the loading screen would.
+        await vmEval(vm => vm.renameSprite(vm.runtime.targets.find(t => t.isOriginal && !t.isStage).id, 'edited'));
+        await releaseHeld();
+        await page.waitForTimeout(2000);
+        const after = {name: await spriteName(), changed: await projectChangedState(), dialogs: [...dialogs],
+            locked: await editor.evaluate(() => window.ReduxStore.getState().scratchGui.modals.loadingProject)};
+        assert(after.name === 'edited' && after.changed === true, `edit lost: ${JSON.stringify(after)}`);
+        assert(locked === true, 'editor was not locked while the backup was made');
+        assert(after.dialogs.length === 2 && /열 수 없어요/.test(after.dialogs[1]) && after.locked === false,
+            `after: ${JSON.stringify(after)}`);
+        return {before, lockedDuringBackup: locked, after};
+    });
+});
+
+await attempt('26 불러오는 중(이전 작품을 지운 뒤)의 exportProject는 불러오기가 끝난 작품을 돌려줌', async () => {
+    const sample = fs.readFileSync(path.join(out, 'sample.sb3'));
+    const moved = await editProject(sample, project => {
+        project.targets.find(t => !t.isStage).x = 123;
+    });
+    return withFileDialogs(async pick => {
+        await sendBytes('loadProject', sample);
+        await holdNext('install');
+        await pick('moved.sb3', moved);
+        await waitForHeld();
+        const midLoad = await vmEval(vm => vm.runtime.targets.length);
+        await page.evaluate(() => {
+            window.__export = window.host.request('exportProject').then(r => Array.from(new Uint8Array(r.sb3)));
+            window.__exportDone = false;
+            window.__export.then(() => {
+                window.__exportDone = true;
+            });
+        });
+        await page.waitForTimeout(1000);
+        const answeredMidLoad = await page.evaluate(() => window.__exportDone);
+        await releaseHeld();
+        const bytes = await page.evaluate(() => window.__export);
+        const zip = await JSZip.loadAsync(Buffer.from(bytes));
+        const project = JSON.parse(await zip.file('project.json').async('string'));
+        const sprite = project.targets.find(t => !t.isStage);
+        const exported = {targets: project.targets.length, x: sprite && sprite.x};
+        assert(midLoad === 0, `the VM was not cleared at the hold point: ${midLoad} targets`);
+        assert(!answeredMidLoad, 'exportProject answered while the project was loading');
+        assert(exported.targets >= 2 && exported.x === 123, `exported: ${JSON.stringify(exported)}`);
+        return {targetsMidLoad: midLoad, answeredMidLoad, exported};
+    });
+});
+
+await attempt('27 바뀐 작품을 파일로 바꿔도 projectChanged, 이전 버전의 saved는 새 작품의 변경 상태를 지우지 않음', async () => {
+    const sample = fs.readFileSync(path.join(out, 'sample.sb3'));
+    const moved = await editProject(sample, project => {
+        project.targets.find(t => !t.isStage).x = 123;
+    });
+    return withFileDialogs(async pick => {
+        await sendBytes('loadProject', sample);
+        // An edit the site starts saving: projectChanged, exportProject, setSaveStatus saving.
+        await clearEvents();
+        await vmEval(vm => vm.runtime.emitProjectChanged());
+        await page.waitForFunction(() => window.host.events.some(e => e.type === 'projectChanged'), null, {timeout: 5000});
+        await request('exportProject');
+        await request('setSaveStatus', {status: 'saving'});
+        // The student opens a file before that save is done.
+        await clearEvents();
+        await pick('moved.sb3', moved);
+        await page.waitForTimeout(1500);
+        const replaced = {events: (await eventsOf('projectChanged')).length, changed: await projectChangedState(),
+            x: await spriteX()};
+        // The older save finishes.
+        await clearEvents();
+        await request('setSaveStatus', {status: 'saved'});
+        await page.waitForTimeout(300);
+        const staleSaved = {changed: await projectChangedState(), events: (await eventsOf('projectChanged')).length};
+        // The site saves again, this time the file's project.
+        await request('exportProject');
+        await request('setSaveStatus', {status: 'saved'});
+        const saved = {changed: await projectChangedState()};
+        assert(replaced.events === 1 && replaced.changed && replaced.x === 123, `replaced: ${JSON.stringify(replaced)}`);
+        assert(staleSaved.changed === true && staleSaved.events === 1, `stale saved: ${JSON.stringify(staleSaved)}`);
+        assert(saved.changed === false, `saved: ${JSON.stringify(saved)}`);
+        return {replaced, staleSaved, saved};
+    });
+});
+
+await attempt('28 사이트가 작품을 여는 도중 컴퓨터에 저장하면 파일 이름과 내용이 같은 작품에서 옴', async () => {
+    const sample = fs.readFileSync(path.join(out, 'sample.sb3'));
+    const siteProject = await editProject(sample, project => {
+        project.targets.find(t => !t.isStage).x = 123;
+    });
+    return withFileDialogs(async pick => {
+        await sendBytes('loadProject', sample);
+        await pick('A.sb3', sample);
+        await page.waitForTimeout(1500);
+        // The site opens its project; the load is held after the VM cleared the file's project.
+        await holdNext('install');
+        await page.evaluate(b => {
+            window.__siteLoad = window.host.request('loadProject', {sb3: new Uint8Array(b).buffer});
+        }, Array.from(siteProject));
+        await waitForHeld();
+        await editor.click('[data-studio=file-menu]');
+        const download = page.waitForEvent('download');
+        await editor.click('[data-studio=file-save]');
+        await page.waitForTimeout(500);
+        await releaseHeld();
+        await page.evaluate(() => window.__siteLoad);
+        const file = await download;
+        const zip = await JSZip.loadAsync(fs.readFileSync(await file.path()));
+        const project = JSON.parse(await zip.file('project.json').async('string'));
+        const saved = {name: file.suggestedFilename(), x: project.targets.find(t => !t.isStage).x};
+        assert(saved.name === '내 작품.sb3' && saved.x === 123, `saved: ${JSON.stringify(saved)}`);
+        return saved;
+    });
+});
+
 await page.close();
 
 // Origin checks need pages on the origin that is not allowed.
-await attempt('20 허용되지 않은 출처에서는 임베드 자체가 막힘 (frame-ancestors)', async () => {
+await attempt('29 허용되지 않은 출처에서는 임베드 자체가 막힘 (frame-ancestors)', async () => {
     const bad = await context.newPage();
     await bad.goto('http://localhost:8603/');
     await bad.waitForTimeout(5000);
@@ -385,7 +819,7 @@ await attempt('20 허용되지 않은 출처에서는 임베드 자체가 막힘
     return {frames};
 });
 
-await attempt('21 허용되지 않은 출처의 메시지는 무시됨 (헤더 없이도)', async () => {
+await attempt('30 허용되지 않은 출처의 메시지는 무시됨 (헤더 없이도)', async () => {
     const bad = await context.newPage();
     await bad.goto('http://localhost:8603/?editor=http://localhost:8604');
     const frame = () => bad.frames().find(f => f.url().startsWith('http://localhost:8604'));

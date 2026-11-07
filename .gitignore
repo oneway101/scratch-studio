@@ -4,3 +4,8 @@ vendor/
 *.log
 spike/out/
 test/out/
+
+# env / secrets
+.env*
+!.env.example
+*.pem

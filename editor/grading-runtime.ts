@@ -288,8 +288,10 @@ export const createGradingRuntime = (sb3: ArrayBuffer): CreateRuntime => () => w
         read: reading => {
             switch (reading.target) {
             case 'sprite': {
-                const target = findSprite(reading.sprite);
-                if (!target || target.isStage) return undefined;
+                const sprite = findSprite(reading.sprite);
+                if (!sprite || sprite.isStage) return undefined;
+                const target = reading.x === undefined ? sprite : targetAt(reading.x, reading.y as number);
+                if (!target || target.sprite !== sprite.sprite) return undefined;
                 switch (reading.property) {
                 case 'x': return target.x;
                 case 'y': return target.y;

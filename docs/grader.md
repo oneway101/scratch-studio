@@ -131,6 +131,7 @@
 | `target` | 고르는 옵션 | `property` | 값 |
 | --- | --- | --- | --- |
 | `sprite` | `sprite` | `x`, `y`, `direction`, `size`, `visible`, `costume`(모양 이름), `sayText`(말풍선 글, 없으면 빈 글), `touchingEdge` | |
+| `sprite` + 무대 좌표 | `sprite`, `x`·`y` | 위와 같음 | 그 점에서 맨 앞에 보이는 이 스프라이트나 복제본의 값(`clickSprite`의 `x`·`y`와 같은 판정). 복제본마다 상태를 확인할 때 쓴다. 그 점에 없으면 읽을 값이 없어 실패 |
 | `variable` | `name`, `sprite`(선택) | 없음 | 변수 값 |
 | `list` | `name`, `sprite`(선택) | `length`, `item`(+ `index`, 1부터) | |
 | `stage` | | `backdrop`(배경 이름) | |

@@ -32,6 +32,9 @@ export interface Reading {
     property?: string;
     name?: unknown;
     index?: number;
+    /** With target sprite: read the sprite or clone on top at this stage point (see clickSprite). */
+    x?: number;
+    y?: number;
 }
 
 export interface Expectation extends Reading {
@@ -115,6 +118,12 @@ const validateReading = (reading: Reading) => {
     }
     if (reading.property === 'item' && typeof reading.index !== 'number') throw new GraderError('expect: item needs index');
     if (reading.sprite !== undefined && typeof reading.sprite !== 'string') throw new GraderError('expect: sprite must be text');
+    if (reading.x !== undefined || reading.y !== undefined) {
+        if (reading.target !== 'sprite') throw new GraderError('expect: x, y only read a sprite');
+        if (![reading.x, reading.y].every(v => typeof v === 'number' && Number.isFinite(v))) {
+            throw new GraderError('expect: x and y must both be numbers');
+        }
+    }
 };
 
 /** Checks the shape of a dynamic check before anything runs, so a bad rule is an error, not a failure. */
@@ -187,7 +196,8 @@ class MissingTarget extends Error {}
 class TimedOut extends Error {}
 
 const label = (expectation: Expectation): string => {
-    const subject = [expectation.target, expectation.sprite, expectation.name !== undefined && JSON.stringify(expectation.name),
+    const point = expectation.x !== undefined && `(${expectation.x}, ${expectation.y})`;
+    const subject = [expectation.target, expectation.sprite, point, expectation.name !== undefined && JSON.stringify(expectation.name),
         expectation.property, expectation.index].filter(part => part !== undefined && part !== false).join('.');
     return subject;
 };

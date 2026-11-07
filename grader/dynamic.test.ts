@@ -45,6 +45,10 @@ const fakeRuntime = (setup: Partial<World> = {}, log: string[] = []): CreateRunt
             world.time += ms;
         },
         read: (reading: Reading) => {
+            if (reading.target === 'sprite' && reading.sprite === 'Cat' && reading.x !== undefined) {
+                // Cat's clone, within 20 of (100, 0), says what the clicks made it say.
+                return Math.hypot(reading.x - 100, (reading.y ?? 0)) <= 20 && reading.property === 'sayText' ? world.say : undefined;
+            }
             if (reading.target === 'sprite' && (reading.sprite === 'Cat' || reading.sprite === '@first')) {
                 if (reading.property === 'x') return world.x;
                 if (reading.property === 'sayText') return world.say;
@@ -113,6 +117,18 @@ describe('dynamic checks', () => {
         const miss = await grade(proj, [dynamic([{do: 'clickSprite', sprite: 'Cat', x: -100, y: 0}], [clicks('')])], fakeRuntime());
         expect(miss.result).toBe('fail');
         expect(miss.checkResults[0].detail).toContain('no Cat at (-100, 0)');
+    });
+
+    it('reads the sprite at a stage point', async () => {
+        const said = (point: {x: number; y: number}) => ({target: 'sprite', sprite: 'Cat', ...point, property: 'sayText', op: 'eq', value: 'Meow!'});
+        const click = {do: 'clickSprite', sprite: 'Cat', x: 100, y: 0};
+        expect((await grade(proj, [dynamic([click], [said({x: 95, y: 5})])], fakeRuntime())).result).toBe('pass');
+        const nothing = await grade(proj, [dynamic([click], [said({x: -100, y: 0})])], fakeRuntime());
+        expect(nothing.result).toBe('fail');
+        expect(nothing.checkResults[0].detail).toContain('sprite.Cat.(-100, 0).sayText');
+        for (const bad of [{target: 'sprite', sprite: 'Cat', x: 1, property: 'x'}, {target: 'variable', name: 'score', x: 1, y: 2}]) {
+            await expect(grade(proj, [dynamic([click], [{...bad, op: 'eq', value: 0}])], fakeRuntime()), JSON.stringify(bad)).rejects.toThrow(GraderError);
+        }
     });
 
     it('needs both x and y for a click at a point', async () => {

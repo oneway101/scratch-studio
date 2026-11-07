@@ -32,6 +32,9 @@ export interface Reading {
     property?: string;
     name?: unknown;
     index?: number;
+    /** With target sprite: read the sprite or clone on top at this stage point (see clickSprite). */
+    x?: number;
+    y?: number;
 }
 
 export interface Expectation extends Reading {
@@ -53,8 +56,12 @@ export interface DynamicCheck {
 export interface GradingRuntime {
     greenFlag (): void;
     key (key: string, isDown: boolean): void;
-    /** False when the sprite is not in the project. */
-    clickSprite (sprite: string): boolean;
+    /**
+     * Clicks the sprite. With `at`, clicks the stage point instead, as a mouse would: the topmost
+     * visible sprite or clone there gets the click, and it has to be this sprite or one of its clones.
+     * False when the sprite is not in the project, or nothing of it is on top at the point.
+     */
+    clickSprite (sprite: string, at?: {x: number; y: number}): boolean;
     mouseMove (x: number, y: number): void;
     answer (text: string): void;
     broadcast (message: string): void;
@@ -111,6 +118,12 @@ const validateReading = (reading: Reading) => {
     }
     if (reading.property === 'item' && typeof reading.index !== 'number') throw new GraderError('expect: item needs index');
     if (reading.sprite !== undefined && typeof reading.sprite !== 'string') throw new GraderError('expect: sprite must be text');
+    if (reading.x !== undefined || reading.y !== undefined) {
+        if (reading.target !== 'sprite') throw new GraderError('expect: x, y only read a sprite');
+        if (![reading.x, reading.y].every(v => typeof v === 'number' && Number.isFinite(v))) {
+            throw new GraderError('expect: x and y must both be numbers');
+        }
+    }
 };
 
 /** Checks the shape of a dynamic check before anything runs, so a bad rule is an error, not a failure. */
@@ -121,6 +134,7 @@ const validate = (check: DynamicCheck): {conditions: Condition[]} => {
     }
     for (const action of check.actions) {
         if (!(ACTIONS as readonly unknown[]).includes(action.do)) throw new GraderError(`unknown action: ${String(action.do)}`);
+        if (action.do === 'clickSprite') clickPoint(action);
     }
     for (const name of ['timeoutMs', 'runs'] as const) {
         const value = check[name];
@@ -140,6 +154,12 @@ const validate = (check: DynamicCheck): {conditions: Condition[]} => {
     return {conditions};
 };
 
+/** The stage point of a clickSprite, or undefined when it clicks the sprite itself. Needs both x and y. */
+const clickPoint = (action: Action): {x: number; y: number} | undefined => {
+    if (action.x === undefined && action.y === undefined) return undefined;
+    return {x: number(action, 'x'), y: number(action, 'y')};
+};
+
 /** Moves project time forward within the check's timeoutMs. */
 type Advance = (ms: number) => Promise<void>;
 
@@ -157,7 +177,10 @@ const runAction = async (runtime: GradingRuntime, action: Action, advance: Advan
     }
     case 'clickSprite': {
         const sprite = text(action, 'sprite');
-        if (!runtime.clickSprite(sprite)) throw new MissingTarget(`clickSprite: no sprite ${sprite}`);
+        const at = clickPoint(action);
+        if (!runtime.clickSprite(sprite, at)) {
+            throw new MissingTarget(at ? `clickSprite: no ${sprite} at (${at.x}, ${at.y})` : `clickSprite: no sprite ${sprite}`);
+        }
         return;
     }
     case 'mouseMove': return runtime.mouseMove(number(action, 'x'), number(action, 'y'));
@@ -173,7 +196,8 @@ class MissingTarget extends Error {}
 class TimedOut extends Error {}
 
 const label = (expectation: Expectation): string => {
-    const subject = [expectation.target, expectation.sprite, expectation.name !== undefined && JSON.stringify(expectation.name),
+    const point = expectation.x !== undefined && `(${expectation.x}, ${expectation.y})`;
+    const subject = [expectation.target, expectation.sprite, point, expectation.name !== undefined && JSON.stringify(expectation.name),
         expectation.property, expectation.index].filter(part => part !== undefined && part !== false).join('.');
     return subject;
 };

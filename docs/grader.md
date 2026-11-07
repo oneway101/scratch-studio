@@ -119,7 +119,7 @@
 | --- | --- | --- |
 | `greenFlag` |  | 초록 깃발 클릭 |
 | `keyPress` | `key`, `durationMs`(기본 100) | 키를 누르고 프로젝트 시간 `durationMs` 뒤에 뗀다. `key`는 브라우저의 키 이름(`ArrowRight`, `a`, ` `)이나 스크래치의 키 이름(`right arrow`, `space`) |
-| `clickSprite` | `sprite` | 그 스프라이트의 "이 스프라이트를 클릭했을 때"를 실행한다. 스프라이트가 없으면 검사 실패 |
+| `clickSprite` | `sprite`, `x`·`y`(선택) | 그 스프라이트의 "이 스프라이트를 클릭했을 때"를 실행한다. 스프라이트가 없으면 검사 실패. `x`·`y`를 함께 주면 마우스처럼 그 무대 좌표를 클릭한다: 그 점에서 맨 앞에 보이는 스프라이트(숨김·완전히 투명한 것은 지나친다)가 이 스프라이트나 그 복제본이면 그것이 클릭을 받는다. 복제본마다 다른 동작을 시험할 때 쓴다. 그 점에 이 스프라이트가 없거나 다른 스프라이트가 앞을 가리면 검사 실패 |
 | `mouseMove` | `x`, `y` | 마우스 포인터를 무대 좌표로 옮긴다 |
 | `answer` | `text` | "묻고 기다리기"에 답을 입력한다 |
 | `broadcast` | `message` | 메시지를 방송한다 |
@@ -131,6 +131,7 @@
 | `target` | 고르는 옵션 | `property` | 값 |
 | --- | --- | --- | --- |
 | `sprite` | `sprite` | `x`, `y`, `direction`, `size`, `visible`, `costume`(모양 이름), `sayText`(말풍선 글, 없으면 빈 글), `touchingEdge` | |
+| `sprite` + 무대 좌표 | `sprite`, `x`·`y` | 위와 같음 | 그 점에서 맨 앞에 보이는 이 스프라이트나 복제본의 값(`clickSprite`의 `x`·`y`와 같은 판정). 복제본마다 상태를 확인할 때 쓴다. 그 점에 없으면 읽을 값이 없어 실패 |
 | `variable` | `name`, `sprite`(선택) | 없음 | 변수 값 |
 | `list` | `name`, `sprite`(선택) | `length`, `item`(+ `index`, 1부터) | |
 | `stage` | | `backdrop`(배경 이름) | |

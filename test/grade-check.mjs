@@ -159,6 +159,32 @@ await scenario('09 clones: 복제본 3개',
     await makeSb3([sprite('Cat', [[flag(), b('control_repeat', {inputs: {TIMES: 2}, substack: [
         b('control_create_clone_of', {inputs: {CLONE_OPTION: {menu: 'control_create_clone_of_menu', value: '_myself_'}}})]})]])]));
 
+// The original stays at (-150, 0) and its clone goes to (100, 0). A click at the clone's point
+// runs the clone's click script; with the clone hidden there is nothing to click.
+const clickedClone = hideClone => makeSb3([sprite('Cat', [
+    [flag(), b('motion_gotoxy', {inputs: {X: -150, Y: 0}}), b('data_setvariableto', {fields: {VARIABLE: 'hit'}, inputs: {VALUE: 0}}),
+        b('control_create_clone_of', {inputs: {CLONE_OPTION: {menu: 'control_create_clone_of_menu', value: '_myself_'}}})],
+    [b('control_start_as_clone'), b('motion_gotoxy', {inputs: {X: 100, Y: 0}}), ...(hideClone ? [b('looks_hide')] : [])],
+    [b('event_whenthisspriteclicked'), b('data_setvariableto', {fields: {VARIABLE: 'hit'}, inputs: {VALUE: b('motion_xposition')}})]])],
+{variables: ['hit']});
+await scenario('09b clickSprite x, y: 그 자리의 복제본을 클릭',
+    [dynamic([{do: 'greenFlag'}, {do: 'wait', ms: 300}, {do: 'clickSprite', sprite: 'Cat', x: 100, y: 0}, {do: 'wait', ms: 200}],
+        [{target: 'variable', name: 'hit', op: 'eq', value: 100}])],
+    await clickedClone(false), await clickedClone(true));
+
+// The clone switches to "second" when clicked; read at its point, its costume shows it.
+const switchedClone = switches => makeSb3([sprite('Cat', [
+    [flag(), b('motion_gotoxy', {inputs: {X: -150, Y: 0}}), b('looks_switchcostumeto', {inputs: {COSTUME: {menu: 'looks_costume', value: '모양 1'}}}),
+        b('control_create_clone_of', {inputs: {CLONE_OPTION: {menu: 'control_create_clone_of_menu', value: '_myself_'}}})],
+    [b('control_start_as_clone'), b('motion_gotoxy', {inputs: {X: 100, Y: 0}})],
+    [b('event_whenthisspriteclicked'), ...(switches ? [b('looks_switchcostumeto', {inputs: {COSTUME: {menu: 'looks_costume', value: 'second'}}})] : [])]])]);
+await scenario('09c sprite x, y: 그 자리의 복제본 모양 읽기 (원본은 그대로)',
+    [dynamic([{do: 'greenFlag'}, {do: 'wait', ms: 300}, {do: 'clickSprite', sprite: 'Cat', x: 100, y: 0}, {do: 'wait', ms: 200}],
+        [{target: 'sprite', sprite: 'Cat', x: 100, y: 0, property: 'costume', op: 'eq', value: 'second'},
+            {target: 'sprite', sprite: 'Cat', x: -150, y: 0, property: 'costume', op: 'eq', value: '모양 1'},
+            cat('costume', 'eq', '모양 1')])],
+    await switchedClone(true), await switchedClone(false));
+
 const listProject = items => makeSb3([sprite('Cat', [[flag(), b('data_deletealloflist', {fields: {LIST: 'bag'}}),
     ...items.map(item => b('data_addtolist', {fields: {LIST: 'bag'}, inputs: {ITEM: item}}))]])], {lists: ['bag']});
 await scenario('10 list: 길이와 항목',

@@ -6,7 +6,8 @@ import {grade, GraderError, type CreateRuntime, type GradingRuntime, type Readin
 /**
  * A stand-in for the VM: one sprite whose x moves 10 per right-arrow press, a "score" variable
  * set by the green flag, a say bubble set by a click, and a "time" variable with the project
- * time that has passed. Enough to drive the grading flow.
+ * time that has passed. A click at a stage point hits Cat when it is within 20 of (100, 0), the
+ * spot of Cat's clone, and logs the point in "clicks". Enough to drive the grading flow.
  */
 interface World {
     x: number;
@@ -14,10 +15,11 @@ interface World {
     say: string;
     keys: string[];
     time: number;
+    clicks: string[];
 }
 
 const fakeRuntime = (setup: Partial<World> = {}, log: string[] = []): CreateRuntime => async () => {
-    const world: World = {x: 50, score: 0, say: '', keys: [], time: 0, ...setup};
+    const world: World = {x: 50, score: 0, say: '', keys: [], time: 0, clicks: [], ...setup};
     log.push('load');
     const runtime: GradingRuntime = {
         greenFlag: () => {
@@ -28,8 +30,10 @@ const fakeRuntime = (setup: Partial<World> = {}, log: string[] = []): CreateRunt
             world.keys.push(`${key}:${isDown ? 'down' : 'up'}`);
             if (key === 'ArrowRight' && isDown) world.x += 10;
         },
-        clickSprite: name => {
+        clickSprite: (name, at) => {
             if (name !== 'Cat') return false;
+            if (at && Math.hypot(at.x - 100, at.y) > 20) return false;
+            if (at) world.clicks.push(`${at.x},${at.y}`);
             world.say = 'Meow!';
             return true;
         },
@@ -41,6 +45,10 @@ const fakeRuntime = (setup: Partial<World> = {}, log: string[] = []): CreateRunt
             world.time += ms;
         },
         read: (reading: Reading) => {
+            if (reading.target === 'sprite' && reading.sprite === 'Cat' && reading.x !== undefined) {
+                // Cat's clone, within 20 of (100, 0), says what the clicks made it say.
+                return Math.hypot(reading.x - 100, (reading.y ?? 0)) <= 20 && reading.property === 'sayText' ? world.say : undefined;
+            }
             if (reading.target === 'sprite' && (reading.sprite === 'Cat' || reading.sprite === '@first')) {
                 if (reading.property === 'x') return world.x;
                 if (reading.property === 'sayText') return world.say;
@@ -48,6 +56,7 @@ const fakeRuntime = (setup: Partial<World> = {}, log: string[] = []): CreateRunt
             }
             if (reading.target === 'variable' && reading.name === 'score') return world.score;
             if (reading.target === 'variable' && reading.name === 'time') return world.time;
+            if (reading.target === 'variable' && reading.name === 'clicks') return world.clicks.join(' ');
             return undefined;
         },
         dispose: () => log.push('dispose')
@@ -98,6 +107,35 @@ describe('dynamic checks', () => {
         const click = dynamic([{do: 'clickSprite', sprite: 'Cat'}],
             [{target: 'sprite', sprite: 'Cat', property: 'sayText', op: 'contains', value: {ko: '야옹', en: 'meow'}}]);
         expect((await grade(proj, [click], fakeRuntime())).result).toBe('pass');
+    });
+
+    it('clicks what is at a stage point', async () => {
+        const clicks = (value: string) => ({target: 'variable', name: 'clicks', op: 'eq', value});
+        const hit = dynamic([{do: 'clickSprite', sprite: 'Cat', x: 100, y: 5}, {do: 'clickSprite', sprite: 'Cat', x: 90, y: -10}],
+            [clicks('100,5 90,-10')]);
+        expect((await grade(proj, [hit], fakeRuntime())).result).toBe('pass');
+        const miss = await grade(proj, [dynamic([{do: 'clickSprite', sprite: 'Cat', x: -100, y: 0}], [clicks('')])], fakeRuntime());
+        expect(miss.result).toBe('fail');
+        expect(miss.checkResults[0].detail).toContain('no Cat at (-100, 0)');
+    });
+
+    it('reads the sprite at a stage point', async () => {
+        const said = (point: {x: number; y: number}) => ({target: 'sprite', sprite: 'Cat', ...point, property: 'sayText', op: 'eq', value: 'Meow!'});
+        const click = {do: 'clickSprite', sprite: 'Cat', x: 100, y: 0};
+        expect((await grade(proj, [dynamic([click], [said({x: 95, y: 5})])], fakeRuntime())).result).toBe('pass');
+        const nothing = await grade(proj, [dynamic([click], [said({x: -100, y: 0})])], fakeRuntime());
+        expect(nothing.result).toBe('fail');
+        expect(nothing.checkResults[0].detail).toContain('sprite.Cat.(-100, 0).sayText');
+        for (const bad of [{target: 'sprite', sprite: 'Cat', x: 1, property: 'x'}, {target: 'variable', name: 'score', x: 1, y: 2}]) {
+            await expect(grade(proj, [dynamic([click], [{...bad, op: 'eq', value: 0}])], fakeRuntime()), JSON.stringify(bad)).rejects.toThrow(GraderError);
+        }
+    });
+
+    it('needs both x and y for a click at a point', async () => {
+        for (const point of [{x: 100}, {y: 0}, {x: '100', y: 0}]) {
+            const check = dynamic([{do: 'clickSprite', sprite: 'Cat', ...point}], [x('eq', 50)]);
+            await expect(grade(proj, [check], fakeRuntime()), JSON.stringify(point)).rejects.toThrow(GraderError);
+        }
     });
 
     it('waits and holds keys in project time, not real time', async () => {

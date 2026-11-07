@@ -246,12 +246,34 @@ export const createGradingRuntime = (sb3: ArrayBuffer): CreateRuntime => () => w
         return undefined;
     };
 
+    /**
+     * The sprite or clone a mouse click at the stage point would hit: the topmost visible drawable
+     * whose shape covers the point, as the renderer's pick does. pick itself takes page coordinates
+     * from the canvas on screen, and this canvas is not on screen, so the same test runs here in
+     * stage coordinates.
+     */
+    const targetAt = (x: number, y: number): Target | undefined => {
+        const render = renderer as any;
+        const point = [x, y, 0];
+        const ids: number[] = render._drawList;
+        for (let i = ids.length - 1; i >= 0; i--) {
+            const drawable = render._allDrawables[ids[i]];
+            // Like pick: skip what a click passes through (hidden, fully ghosted, not interactive).
+            if (!drawable || !drawable.interactive || !drawable.getVisible() || drawable.getUniforms().u_ghost === 0) continue;
+            drawable.updateCPURenderAttributes();
+            if (drawable.isTouching(point)) return runtime.targets.find((target: Target) => target.drawableID === ids[i]);
+        }
+        return undefined;
+    };
+
     const grading: GradingRuntime = {
         greenFlag: () => clock.run(() => vm.greenFlag()),
         key: (key, isDown) => clock.run(() => vm.postIOData('keyboard', {key, isDown})),
-        clickSprite: name => {
-            const target = findSprite(name);
-            if (!target || target.isStage) return false;
+        clickSprite: (name, at) => {
+            const sprite = findSprite(name);
+            if (!sprite || sprite.isStage) return false;
+            const target = at ? targetAt(at.x, at.y) : sprite;
+            if (!target || target.sprite !== sprite.sprite) return false;
             clock.run(() => runtime.startHats('event_whenthisspriteclicked', null, target));
             return true;
         },

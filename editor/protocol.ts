@@ -46,6 +46,7 @@ export interface SiteRequests {
     init: {payload: {locale: Locale; mode: Mode}; reply: Empty};
     /** `sb3: null` opens an empty project. */
     loadProject: {payload: {sb3: ArrayBuffer | null}; reply: Empty};
+    /** Waits for a project that is still loading. Save the sb3 from this reply, then send setSaveStatus. */
     exportProject: {payload: Empty; reply: {sb3: ArrayBuffer}};
     /** 480x360 PNG of the stage, for thumbnails. */
     captureStage: {payload: Empty; reply: {png: ArrayBuffer}};
@@ -54,7 +55,10 @@ export interface SiteRequests {
         reply: {result: GradeResult; checkResults: unknown[]; sb3: ArrayBuffer};
     };
     setMode: {payload: {mode: Mode}; reply: Empty};
-    /** edit mode only. */
+    /**
+     * edit mode only. `saved` means the sb3 from the last exportProject (or grade) is saved. If the
+     * project changed since that export, it stays changed and the editor sends projectChanged again.
+     */
     setSaveStatus: {payload: {status: SaveStatus}; reply: Empty};
 }
 export type SiteRequestType = keyof SiteRequests;
@@ -62,7 +66,10 @@ export type SiteRequestType = keyof SiteRequests;
 /** Messages the editor sends on its own. `error` also answers a request, with that request's `requestId`. */
 export interface EditorEvents {
     ready: Empty;
-    /** edit mode only. */
+    /**
+     * edit mode only. The project has changes the site has not saved. Also sent while the project is
+     * already changed, when a file from the student's computer replaces it or a save was of an older version.
+     */
     projectChanged: Empty;
     /** The student picked a language in the editor's language menu. Not sent for `init`. */
     localeChanged: {locale: Locale};

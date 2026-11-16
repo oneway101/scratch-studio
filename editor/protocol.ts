@@ -67,6 +67,11 @@ export interface SiteRequests {
      * editor sends projectChanged again. A status for an earlier export than an earlier status is late
      * and ignored, so saves may overlap and answer in any order. exportIds start again from 1 in each
      * editor session (each `ready`): do not send a status for an export from before the last `ready`.
+     *
+     * The editor orders saves by exportId, not by when the site wrote them. When saves overlap, the
+     * site must not let an earlier export's sb3 replace a later one it has already stored (write one at
+     * a time in exportId order, or store only if the exportId is larger than the stored one). Otherwise
+     * the editor shows the later project as saved while the stored one is the earlier.
      */
     setSaveStatus: {payload: {status: SaveStatus; exportId: number}; reply: Empty};
 }

@@ -637,6 +637,20 @@ const holdNext = stage => editor.evaluate(st => {
         });
     };
 }, stage);
+// Holds the next loadProject of a VM other than the editor's: the grading VM, made by grade after it
+// has taken its exportId and before it replies. Released with releaseHeld like holdNext.
+const holdGradingLoad = () => editor.evaluate(() => {
+    const editorVm = window.ReduxStore.getState().scratchGui.vm;
+    const proto = Object.getPrototypeOf(editorVm);
+    const original = proto.loadProject;
+    proto.loadProject = function (...args) {
+        if (this === editorVm) return original.apply(this, args);
+        proto.loadProject = original;
+        return new Promise((resolve, reject) => {
+            window.__studioHold = () => original.apply(this, args).then(resolve, reject);
+        });
+    };
+});
 const waitForHeld = () => editor.waitForFunction(() => Boolean(window.__studioHold), null, {timeout: 10000});
 const releaseHeld = () => editor.evaluate(() => {
     const release = window.__studioHold;
@@ -909,27 +923,26 @@ await attempt('29 저장 응답은 그 내보내기에만 적용: 저장 중 채
         const afterG = await state();
 
         // grade takes its exportId with the snapshot, but the site has it only once the reply comes:
-        // a status for it while grading still runs is refused. 40 runs keep the grading VM busy for
-        // about two seconds (project time runs faster there than on screen).
+        // a status for it while grading still runs is refused. The grading VM is made after the
+        // exportId is taken, so holding its loadProject holds grade after that point and before the reply.
         await edit();
         const h = await exportSave();
+        await holdGradingLoad();
         await page.evaluate(() => {
-            window.__slowGradeDone = false;
-            window.__slowGrade = window.host.request('grade', {checks: [{type: 'dynamic', runs: 40,
+            window.__heldGradeDone = false;
+            window.__heldGrade = window.host.request('grade', {checks: [{type: 'dynamic',
                 actions: [{do: 'wait', ms: 100}],
                 expect: [{target: 'sprite', sprite: '@first', property: 'x', op: 'gt', value: -1000}]}]})
                 .then(r => {
-                    window.__slowGradeDone = true;
+                    window.__heldGradeDone = true;
                     return r.exportId;
                 });
         });
-        await page.waitForTimeout(300);
-        const whileGrading = await page.evaluate(() => window.host.request('setSaveStatus',
-            {status: 'saved', exportId: window.host.exportId + 1})
-            .then(() => 'answered', e => e.message)
-            .then(reply => ({reply, gradingDone: window.__slowGradeDone})));
-        const afterWhileGrading = await state();
-        const slowGraded = await page.evaluate(() => window.__slowGrade);
+        await waitForHeld();
+        const whileGrading = await requestError('setSaveStatus', {status: 'saved', exportId: h + 1});
+        const afterWhileGrading = {...await state(), gradeDone: await page.evaluate(() => window.__heldGradeDone)};
+        await releaseHeld();
+        const slowGraded = await page.evaluate(() => window.__heldGrade);
         await setSaveStatus('saved', slowGraded);
         const afterSlowGraded = await state();
 
@@ -949,7 +962,8 @@ await attempt('29 저장 응답은 그 내보내기에만 적용: 저장 중 채
         assert(/^invalid_payload/.test(neverReturned) && afterRefused.changed === true && afterRefused.status === '저장 중',
             `never returned: ${neverReturned} ${JSON.stringify(afterRefused)}`);
         assert(afterG.changed === false && afterG.status === '저장됨', `saved after a refused exportId: ${JSON.stringify(afterG)}`);
-        assert(!whileGrading.gradingDone && /^invalid_payload/.test(whileGrading.reply) && afterWhileGrading.changed === true,
+        // slowGraded === h + 1 shows the id was already taken while held, so only the unsent check refused it.
+        assert(/^invalid_payload/.test(whileGrading) && afterWhileGrading.changed === true && !afterWhileGrading.gradeDone,
             `while grading: ${JSON.stringify({whileGrading, afterWhileGrading})}`);
         assert(slowGraded === h + 1 && afterSlowGraded.changed === false && afterSlowGraded.status === '저장됨',
             `after slow grade: ${JSON.stringify({h, slowGraded, afterSlowGraded})}`);

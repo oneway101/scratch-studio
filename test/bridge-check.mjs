@@ -814,7 +814,7 @@ await attempt('28 사이트가 작품을 여는 도중 컴퓨터에 저장하면
     });
 });
 
-await attempt('29 저장 응답은 그 저장의 버전에만 적용: 저장 중 채점, 순서가 바뀐 응답', async () => {
+await attempt('29 저장 응답은 그 저장의 버전에만 적용: 저장 중 채점, 순서가 바뀐 응답, 내보낸 적 없는 버전 거부', async () => {
     const sample = fs.readFileSync(path.join(out, 'sample.sb3'));
     const moved = await editProject(sample, project => {
         project.targets.find(t => !t.isStage).x = 123;
@@ -874,6 +874,25 @@ await attempt('29 저장 응답은 그 저장의 버전에만 적용: 저장 중
         await setSaveStatus('saved', c2);
         const newerSaved = await state();
 
+        // Only a version the site got an sb3 of can be saved, not the current one before it is exported.
+        await edit();
+        const d0 = await exportVersion();
+        await setSaveStatus('saving', d0);
+        await edit();
+        const unexportedCurrent = await requestError('setSaveStatus', {status: 'saved', version: d0 + 1});
+        const afterUnexported = await state();
+        // The refused version did not count as newer: the real answer for d0 still comes through.
+        await clearEvents();
+        await setSaveStatus('saved', d0);
+        await page.waitForTimeout(300);
+        const afterD0 = await state();
+        // A version between two exports, never handed out, is refused too.
+        await edit();
+        const d2 = await exportVersion();
+        const unexportedMiddle = await requestError('setSaveStatus', {status: 'saving', version: d2 - 1});
+        await setSaveStatus('saved', d2);
+        const afterD2 = await state();
+
         assert(graded.result === 'pass' && graded.version > a, `graded: ${JSON.stringify(graded)}`);
         assert(afterA.changed === true && afterA.events === 1, `after A saved: ${JSON.stringify(afterA)}`);
         assert(afterGraded.changed === false && afterGraded.status === '저장됨', `after graded saved: ${JSON.stringify(afterGraded)}`);
@@ -882,7 +901,14 @@ await attempt('29 저장 응답은 그 저장의 버전에만 적용: 저장 중
         assert(c2 > c1 && earlyOlder.changed === true && earlyOlder.events === 0 && earlyOlder.status === '저장 중',
             `early older saved: ${JSON.stringify(earlyOlder)}`);
         assert(newerSaved.changed === false && newerSaved.status === '저장됨', `newer saved: ${JSON.stringify(newerSaved)}`);
-        return {versions: {a, graded: graded.version, b1, b2, c1, c2}, afterA, afterGraded, lateOlder, earlyOlder, newerSaved};
+        assert(/^invalid_payload/.test(unexportedCurrent) && afterUnexported.changed === true
+            && afterUnexported.status === '저장 중', `unexported current: ${unexportedCurrent} ${JSON.stringify(afterUnexported)}`);
+        assert(afterD0.changed === true && afterD0.events === 1 && afterD0.status === '저장됨',
+            `saved after a refused version: ${JSON.stringify(afterD0)}`);
+        assert(d2 - 1 > d0 && /^invalid_payload/.test(unexportedMiddle) && afterD2.changed === false,
+            `unexported middle: ${unexportedMiddle} ${JSON.stringify({d0, d2, afterD2})}`);
+        return {versions: {a, graded: graded.version, b1, b2, c1, c2, d0, d2}, afterA, afterGraded, lateOlder,
+            earlyOlder, newerSaved, unexportedCurrent, afterD0, unexportedMiddle, afterD2};
     });
 });
 

@@ -61,7 +61,7 @@ export interface SiteRequests {
     setMode: {payload: {mode: Mode}; reply: Empty};
     /**
      * edit mode only. `version` is the one exportProject (or grade) returned with the sb3 this save is
-     * of. `saved` clears the changed state only when that version is the current project; a save of an
+     * of; any other version is refused with invalid_payload. `saved` clears the changed state only when that version is the current project; a save of an
      * older version leaves it changed and the editor sends projectChanged again. A status for an older
      * version than an earlier status is late and ignored, so saves may answer in any order.
      */

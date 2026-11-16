@@ -78,9 +78,12 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
     // the current one, so a version names one project as it was. exportProject and grade return it with
     // the sb3, and setSaveStatus carries it back: a "saved" status clears the changed state only for the
     // current version, so a save of an older version or another project cannot hide unsaved changes.
-    // statusVersion is the newest version a status came for; a status for an older one is late.
+    // A status is taken only for a version the site was handed an sb3 of (handedVersions), so a version
+    // the site never had cannot be marked saved. statusVersion is the newest version a status came
+    // for; a status for an older one is late.
     let editVersion = 0;
     let statusVersion = 0;
+    const handedVersions = new Set<number>();
     vm.on('PROJECT_CHANGED', () => {
         if (!loading) editVersion++;
     });
@@ -310,6 +313,7 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
         },
         exportProject: async () => {
             const {sb3, version} = await queueProject(exportSb3WithVersion);
+            handedVersions.add(version);
             return {payload: {sb3, version}, transfer: [sb3]};
         },
         captureStage: () => queueProject(() => new Promise(resolve => {
@@ -326,6 +330,7 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
                 const snapshot = vm.toJSON();
                 return {json: snapshot, ...await exportSb3WithVersion()};
             });
+            handedVersions.add(version);
             try {
                 const {result, checkResults} = await grade(json, checks, createGradingRuntime(sb3));
                 return {payload: {result, checkResults, sb3, version}, transfer: [sb3]};
@@ -343,10 +348,15 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
         },
         setSaveStatus: async ({status, version}) => {
             if (mode !== 'edit') throw new BridgeError('wrong_mode', `setSaveStatus in ${mode} mode`);
-            if (version > editVersion) throw new BridgeError('invalid_payload', `setSaveStatus: version ${version} was never exported`);
             // A newer save has already answered or started: this one has nothing left to say.
             if (version < statusVersion) return {payload: {}};
+            if (!handedVersions.has(version)) {
+                throw new BridgeError('invalid_payload',
+                    `setSaveStatus: version ${version} did not come from exportProject or grade`);
+            }
             statusVersion = version;
+            // Older versions can only be late from now on, so they need not be remembered.
+            for (const handed of handedVersions) if (handed < version) handedVersions.delete(handed);
             setSaveState({status});
             if (status === 'saved') {
                 if (version === editVersion) store.dispatch(setProjectUnchanged());

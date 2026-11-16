@@ -65,7 +65,8 @@ export interface SiteRequests {
      * exportId, also when the project has not changed. `saved` clears the changed state only when
      * that export is of the project as it is now; a save of an older project leaves it changed and the
      * editor sends projectChanged again. A status for an earlier export than an earlier status is late
-     * and ignored, so saves may overlap and answer in any order.
+     * and ignored, so saves may overlap and answer in any order. exportIds start again from 1 in each
+     * editor session (each `ready`): do not send a status for an export from before the last `ready`.
      */
     setSaveStatus: {payload: {status: SaveStatus; exportId: number}; reply: Empty};
 }
@@ -73,6 +74,7 @@ export type SiteRequestType = keyof SiteRequests;
 
 /** Messages the editor sends on its own. `error` also answers a request, with that request's `requestId`. */
 export interface EditorEvents {
+    /** The editor has (re)loaded. A new session: exportIds start again from 1. */
     ready: Empty;
     /**
      * edit mode only. The project has changes the site has not saved. Also sent while the project is

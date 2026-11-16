@@ -45,7 +45,9 @@ const describe = v => JSON.stringify(v, (k, x) => x instanceof ArrayBuffer ? `Ar
 const host = window.host = {
   // kept and exportId: the newest sb3 from exportProject or grade and its exportId, kept together as the
   // site keeps what it saves; the setSaveStatus buttons answer for that sb3. Newest is by exportId, not
-  // by arrival: a grade reply comes after grading, later than an export taken after it.
+  // by arrival: a grade reply comes after grading, later than an export taken after it. A new editor
+  // session (ready) counts exportIds from 1 again, so exportId goes back to 0 there; kept stays, to
+  // open the earlier session's project in the new one, until the new session's first export.
   events: [], pending: new Map(), seq: 0, kept: null, exportId: 0, readyAt: null, startedAt: performance.now(),
   log(line) { logEl.textContent = line + '\n' + logEl.textContent.slice(0, 4000); },
   // Raw post, for checks that send malformed messages.
@@ -75,7 +77,10 @@ window.addEventListener('message', event => {
   const m = event.data;
   if (!m || m.source !== 'scratch-studio') return;
   host.log(`← ${m.type} ${describe(m.payload || {})}`);
-  if (m.type === 'ready') host.readyAt = performance.now() - host.startedAt;
+  if (m.type === 'ready') {
+    host.readyAt = performance.now() - host.startedAt;
+    host.exportId = 0;
+  }
   const waiting = m.requestId && host.pending.get(m.requestId);
   if (waiting) {
     clearTimeout(waiting.timer);

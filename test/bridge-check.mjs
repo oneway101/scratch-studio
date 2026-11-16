@@ -984,10 +984,32 @@ await attempt('29 저장 응답은 그 내보내기에만 적용: 저장 중 채
     });
 });
 
+// Last on this page: it reloads the editor.
+await attempt('30 에디터를 다시 불러오면 exportId는 1부터, 시험 페이지는 새 세션의 첫 내보내기를 보관', async () => {
+    const before = await page.evaluate(async () => (await window.host.request('exportProject')).exportId);
+    await page.evaluate(([url]) => {
+        window.host.readyAt = null;
+        document.getElementById('editor').src = url;
+    }, [`${EDITOR}/index.html?reload`]);
+    await page.waitForFunction(() => window.host.readyAt !== null, null, {timeout: 120000});
+    const atReady = await page.evaluate(() => window.host.exportId);
+    await request('init', {locale: 'ko', mode: 'edit'});
+    const after = await page.evaluate(async () => {
+        const r = await window.host.request('exportProject');
+        return {exportId: r.exportId, hostId: window.host.exportId, keptIsIt: window.host.kept === r.sb3};
+    });
+    const saved = await page.evaluate(() => window.host.request('setSaveStatus',
+        {status: 'saved', exportId: window.host.exportId}).then(() => 'answered', e => e.message));
+    assert(before > 1 && atReady === 0, `before reload ${before}, host exportId at ready ${atReady}`);
+    assert(after.exportId === 1 && after.hostId === 1 && after.keptIsIt, `after reload: ${JSON.stringify(after)}`);
+    assert(saved === 'answered', `saved: ${saved}`);
+    return {before, atReady, after, saved};
+});
+
 await page.close();
 
 // Origin checks need pages on the origin that is not allowed.
-await attempt('30 허용되지 않은 출처에서는 임베드 자체가 막힘 (frame-ancestors)', async () => {
+await attempt('31 허용되지 않은 출처에서는 임베드 자체가 막힘 (frame-ancestors)', async () => {
     const bad = await context.newPage();
     await bad.goto('http://localhost:8603/');
     await bad.waitForTimeout(5000);
@@ -998,7 +1020,7 @@ await attempt('30 허용되지 않은 출처에서는 임베드 자체가 막힘
     return {frames};
 });
 
-await attempt('31 허용되지 않은 출처의 메시지는 무시됨 (헤더 없이도)', async () => {
+await attempt('32 허용되지 않은 출처의 메시지는 무시됨 (헤더 없이도)', async () => {
     const bad = await context.newPage();
     await bad.goto('http://localhost:8603/?editor=http://localhost:8604');
     const frame = () => bad.frames().find(f => f.url().startsWith('http://localhost:8604'));

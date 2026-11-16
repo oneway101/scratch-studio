@@ -340,10 +340,12 @@ await attempt('15 번들되지 않은 확장이 든 작품은 열리지 않음',
     return {reply};
 });
 
-await attempt('16 grade: 빈 채점 규칙은 통과, 작품(sb3)을 함께 돌려줌 (자세한 점검은 npm run check:grade)', async () => {
+await attempt('16 grade: 빈 채점 규칙은 통과, 작품(sb3)을 함께 돌려줌, 시험 페이지는 그 sb3와 exportId를 함께 보관 (자세한 점검은 npm run check:grade)', async () => {
     const reply = await page.evaluate(() => window.host.request('grade', {checks: []})
-        .then(r => ({result: r.result, sb3: r.sb3.byteLength})));
+        .then(r => ({result: r.result, sb3: r.sb3.byteLength, exportId: r.exportId,
+            keptSame: window.host.kept === r.sb3, keptId: window.host.exportId})));
     assert(reply.result === 'pass' && reply.sb3 > 0, JSON.stringify(reply));
+    assert(reply.keptSame && reply.keptId === reply.exportId, `host kept: ${JSON.stringify(reply)}`);
     return reply;
 });
 
@@ -814,7 +816,7 @@ await attempt('28 사이트가 작품을 여는 도중 컴퓨터에 저장하면
     });
 });
 
-await attempt('29 저장 응답은 그 내보내기에만 적용: 저장 중 채점, 순서가 바뀐 응답, 같은 작품의 겹친 저장, 받은 적 없는 exportId 거부', async () => {
+await attempt('29 저장 응답은 그 내보내기에만 적용: 저장 중 채점, 순서가 바뀐 응답, 같은 작품의 겹친 저장, 받은 적 없는·아직 보내지 않은 exportId 거부', async () => {
     const sample = fs.readFileSync(path.join(out, 'sample.sb3'));
     const moved = await editProject(sample, project => {
         project.targets.find(t => !t.isStage).x = 123;
@@ -906,6 +908,31 @@ await attempt('29 저장 응답은 그 내보내기에만 적용: 저장 중 채
         await setSaveStatus('saved', g);
         const afterG = await state();
 
+        // grade takes its exportId with the snapshot, but the site has it only once the reply comes:
+        // a status for it while grading still runs is refused. 40 runs keep the grading VM busy for
+        // about two seconds (project time runs faster there than on screen).
+        await edit();
+        const h = await exportSave();
+        await page.evaluate(() => {
+            window.__slowGradeDone = false;
+            window.__slowGrade = window.host.request('grade', {checks: [{type: 'dynamic', runs: 40,
+                actions: [{do: 'wait', ms: 100}],
+                expect: [{target: 'sprite', sprite: '@first', property: 'x', op: 'gt', value: -1000}]}]})
+                .then(r => {
+                    window.__slowGradeDone = true;
+                    return r.exportId;
+                });
+        });
+        await page.waitForTimeout(300);
+        const whileGrading = await page.evaluate(() => window.host.request('setSaveStatus',
+            {status: 'saved', exportId: window.host.exportId + 1})
+            .then(() => 'answered', e => e.message)
+            .then(reply => ({reply, gradingDone: window.__slowGradeDone})));
+        const afterWhileGrading = await state();
+        const slowGraded = await page.evaluate(() => window.__slowGrade);
+        await setSaveStatus('saved', slowGraded);
+        const afterSlowGraded = await state();
+
         assert(graded.result === 'pass' && graded.exportId > a, `graded: ${JSON.stringify(graded)}`);
         assert(afterA.changed === true && afterA.events === 1, `after A saved: ${JSON.stringify(afterA)}`);
         assert(afterGraded.changed === false && afterGraded.status === '저장됨', `after graded saved: ${JSON.stringify(afterGraded)}`);
@@ -922,8 +949,13 @@ await attempt('29 저장 응답은 그 내보내기에만 적용: 저장 중 채
         assert(/^invalid_payload/.test(neverReturned) && afterRefused.changed === true && afterRefused.status === '저장 중',
             `never returned: ${neverReturned} ${JSON.stringify(afterRefused)}`);
         assert(afterG.changed === false && afterG.status === '저장됨', `saved after a refused exportId: ${JSON.stringify(afterG)}`);
-        return {exportIds: {a, graded: graded.exportId, b1, b2, c1, c2, s1, s2, t1, t2, g}, afterA, afterGraded,
-            lateOlder, earlyOlder, newerSaved, lateFailure, earlyFailure, sameSaved, neverReturned, afterRefused, afterG};
+        assert(!whileGrading.gradingDone && /^invalid_payload/.test(whileGrading.reply) && afterWhileGrading.changed === true,
+            `while grading: ${JSON.stringify({whileGrading, afterWhileGrading})}`);
+        assert(slowGraded === h + 1 && afterSlowGraded.changed === false && afterSlowGraded.status === '저장됨',
+            `after slow grade: ${JSON.stringify({h, slowGraded, afterSlowGraded})}`);
+        return {exportIds: {a, graded: graded.exportId, b1, b2, c1, c2, s1, s2, t1, t2, g, h, slowGraded}, afterA,
+            afterGraded, lateOlder, earlyOlder, newerSaved, lateFailure, earlyFailure, sameSaved, neverReturned,
+            afterRefused, afterG, whileGrading, afterWhileGrading, afterSlowGraded};
     });
 });
 

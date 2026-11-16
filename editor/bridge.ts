@@ -79,15 +79,18 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
     // (exportProject, grade) gets the next exportId, and the editor keeps the version it was of; the
     // site sends the exportId back with setSaveStatus. "saved" clears the changed state only when that
     // version is the current one, so a save of an older version or another project cannot hide unsaved
-    // changes. exportIds are handed out in order, so 1..lastExportId are exactly the ones the site got,
-    // and a status for an exportId older than the newest one a status came for (statusExportId) is late,
-    // even when two exports are of the same version.
+    // changes. exportIds are taken in the order the sb3s are, so a status for an exportId older than the
+    // newest one a status came for (statusExportId) is late, even when two exports are of the same
+    // version. grade takes its exportId with the snapshot but replies only after grading: until then
+    // the id is in unsent, and 1..lastExportId without unsent are exactly the ones the site got.
     let editVersion = 0;
     let lastExportId = 0;
     let statusExportId = 0;
     const exportVersions = new Map<number, number>(); // exportId -> version, from statusExportId on
-    const handOut = (version: number): number => {
+    const unsent = new Set<number>();
+    const takeExportId = (version: number): number => {
         exportVersions.set(++lastExportId, version);
+        unsent.add(lastExportId);
         return lastExportId;
     };
     vm.on('PROJECT_CHANGED', () => {
@@ -319,7 +322,9 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
         },
         exportProject: async () => {
             const {sb3, version} = await queueProject(exportSb3WithVersion);
-            return {payload: {sb3, exportId: handOut(version)}, transfer: [sb3]};
+            const exportId = takeExportId(version);
+            unsent.delete(exportId); // posted as soon as this returns
+            return {payload: {sb3, exportId}, transfer: [sb3]};
         },
         captureStage: () => queueProject(() => new Promise(resolve => {
             vm.renderer.requestSnapshot(dataUri => {
@@ -335,7 +340,8 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
                 const snapshot = vm.toJSON();
                 return {json: snapshot, ...await exportSb3WithVersion()};
             });
-            const exportId = handOut(version);
+            // Taken now to keep the order of the snapshots; accepted in setSaveStatus once it is sent.
+            const exportId = takeExportId(version);
             try {
                 const {result, checkResults} = await grade(json, checks, createGradingRuntime(sb3));
                 return {payload: {result, checkResults, sb3, exportId}, transfer: [sb3]};
@@ -345,6 +351,9 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
                 const message = error instanceof Error ? error.message : String(error);
                 const checkResults = [{type: 'error', pass: false, detail: error instanceof GraderError ? message : `grading failed: ${message}`}];
                 return {payload: {result: 'error', checkResults, sb3, exportId}, transfer: [sb3]};
+            } finally {
+                // The reply is posted as soon as this returns, before another message can be handled.
+                unsent.delete(exportId);
             }
         },
         setMode: async ({mode: nextMode}) => {
@@ -353,7 +362,7 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
         },
         setSaveStatus: async ({status, exportId}) => {
             if (mode !== 'edit') throw new BridgeError('wrong_mode', `setSaveStatus in ${mode} mode`);
-            if (exportId > lastExportId) {
+            if (exportId > lastExportId || unsent.has(exportId)) {
                 throw new BridgeError('invalid_payload',
                     `setSaveStatus: exportId ${exportId} did not come from exportProject or grade`);
             }

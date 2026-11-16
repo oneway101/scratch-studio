@@ -43,7 +43,8 @@ document.getElementById('origin').textContent = location.origin;
 const logEl = document.getElementById('log');
 const describe = v => JSON.stringify(v, (k, x) => x instanceof ArrayBuffer ? `ArrayBuffer(${x.byteLength})` : x);
 const host = window.host = {
-  // exportId: from the last exportProject or grade reply, for the setSaveStatus buttons.
+  // kept and exportId: the sb3 of the last exportProject or grade reply and its exportId, kept together
+  // as the site keeps what it saves; the setSaveStatus buttons answer for that sb3.
   events: [], pending: new Map(), seq: 0, kept: null, exportId: 0, readyAt: null, startedAt: performance.now(),
   log(line) { logEl.textContent = line + '\n' + logEl.textContent.slice(0, 4000); },
   // Raw post, for checks that send malformed messages.
@@ -58,7 +59,7 @@ const host = window.host = {
       host.post({source: 'scratch-studio', version: 2, type, requestId, payload: payload || {}}, transfer);
     });
   },
-  async exportAndKeep() { const r = await host.request('exportProject'); host.kept = r.sb3; return r.sb3.byteLength; },
+  async exportAndKeep() { const r = await host.request('exportProject'); return r.sb3.byteLength; },
   async reload() { return host.request('loadProject', {sb3: host.kept.slice(0)}); },
   async capture() {
     const r = await host.request('captureStage');
@@ -80,7 +81,10 @@ window.addEventListener('message', event => {
     host.pending.delete(m.requestId);
     if (m.type === 'error') waiting.reject(new Error(m.payload.code + ': ' + m.payload.message));
     else {
-      if (typeof m.payload.exportId === 'number') host.exportId = m.payload.exportId;
+      if (typeof m.payload.exportId === 'number') {
+        host.kept = m.payload.sb3;
+        host.exportId = m.payload.exportId;
+      }
       waiting.resolve(m.payload);
     }
   } else {

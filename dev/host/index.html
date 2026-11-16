@@ -43,8 +43,9 @@ document.getElementById('origin').textContent = location.origin;
 const logEl = document.getElementById('log');
 const describe = v => JSON.stringify(v, (k, x) => x instanceof ArrayBuffer ? `ArrayBuffer(${x.byteLength})` : x);
 const host = window.host = {
-  // kept and exportId: the sb3 of the last exportProject or grade reply and its exportId, kept together
-  // as the site keeps what it saves; the setSaveStatus buttons answer for that sb3.
+  // kept and exportId: the newest sb3 from exportProject or grade and its exportId, kept together as the
+  // site keeps what it saves; the setSaveStatus buttons answer for that sb3. Newest is by exportId, not
+  // by arrival: a grade reply comes after grading, later than an export taken after it.
   events: [], pending: new Map(), seq: 0, kept: null, exportId: 0, readyAt: null, startedAt: performance.now(),
   log(line) { logEl.textContent = line + '\n' + logEl.textContent.slice(0, 4000); },
   // Raw post, for checks that send malformed messages.
@@ -81,7 +82,7 @@ window.addEventListener('message', event => {
     host.pending.delete(m.requestId);
     if (m.type === 'error') waiting.reject(new Error(m.payload.code + ': ' + m.payload.message));
     else {
-      if (typeof m.payload.exportId === 'number') {
+      if (typeof m.payload.exportId === 'number' && m.payload.exportId > host.exportId) {
         host.kept = m.payload.sb3;
         host.exportId = m.payload.exportId;
       }

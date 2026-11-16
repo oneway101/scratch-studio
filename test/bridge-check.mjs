@@ -941,8 +941,17 @@ await attempt('29 저장 응답은 그 내보내기에만 적용: 저장 중 채
         await waitForHeld();
         const whileGrading = await requestError('setSaveStatus', {status: 'saved', exportId: h + 1});
         const afterWhileGrading = {...await state(), gradeDone: await page.evaluate(() => window.__heldGradeDone)};
+        // An export taken while grading runs is newer than the grade, though its reply comes first:
+        // the test host keeps it, not the grade's sb3 that arrives after.
+        const newer = await page.evaluate(async () => {
+            const r = await window.host.request('exportProject');
+            window.__newerSb3 = r.sb3;
+            return r.exportId;
+        });
         await releaseHeld();
         const slowGraded = await page.evaluate(() => window.__heldGrade);
+        const hostKept = await page.evaluate(() => ({exportId: window.host.exportId,
+            keptNewer: window.host.kept === window.__newerSb3}));
         await setSaveStatus('saved', slowGraded);
         const afterSlowGraded = await state();
 
@@ -965,11 +974,13 @@ await attempt('29 저장 응답은 그 내보내기에만 적용: 저장 중 채
         // slowGraded === h + 1 shows the id was already taken while held, so only the unsent check refused it.
         assert(/^invalid_payload/.test(whileGrading) && afterWhileGrading.changed === true && !afterWhileGrading.gradeDone,
             `while grading: ${JSON.stringify({whileGrading, afterWhileGrading})}`);
+        assert(newer === h + 2 && hostKept.exportId === newer && hostKept.keptNewer,
+            `host kept after a late grade reply: ${JSON.stringify({h, newer, hostKept})}`);
         assert(slowGraded === h + 1 && afterSlowGraded.changed === false && afterSlowGraded.status === '저장됨',
             `after slow grade: ${JSON.stringify({h, slowGraded, afterSlowGraded})}`);
         return {exportIds: {a, graded: graded.exportId, b1, b2, c1, c2, s1, s2, t1, t2, g, h, slowGraded}, afterA,
             afterGraded, lateOlder, earlyOlder, newerSaved, lateFailure, earlyFailure, sameSaved, neverReturned,
-            afterRefused, afterG, whileGrading, afterWhileGrading, afterSlowGraded};
+            afterRefused, afterG, whileGrading, afterWhileGrading, newer, hostKept, afterSlowGraded};
     });
 });
 

@@ -3,7 +3,7 @@
 // as they are; changing a message means bumping VERSION.
 
 export const SOURCE = 'scratch-studio';
-export const VERSION = 1;
+export const VERSION = 2;
 
 export const LOCALES = ['ko', 'en'] as const;
 export type Locale = typeof LOCALES[number];
@@ -46,25 +46,40 @@ export interface SiteRequests {
     init: {payload: {locale: Locale; mode: Mode}; reply: Empty};
     /** `sb3: null` opens an empty project. */
     loadProject: {payload: {sb3: ArrayBuffer | null}; reply: Empty};
-    /** Waits for a project that is still loading. Save the sb3 from this reply, then send setSaveStatus. */
-    exportProject: {payload: Empty; reply: {sb3: ArrayBuffer}};
+    /**
+     * Waits for a project that is still loading. Save the sb3 from this reply, then send setSaveStatus
+     * with its `exportId`.
+     */
+    exportProject: {payload: Empty; reply: {sb3: ArrayBuffer; exportId: number}};
     /** 480x360 PNG of the stage, for thumbnails. */
     captureStage: {payload: Empty; reply: {png: ArrayBuffer}};
     grade: {
         payload: {checks: Check[]};
-        reply: {result: GradeResult; checkResults: unknown[]; sb3: ArrayBuffer};
+        /** The site may save this sb3 as it saves an exported one, with its `exportId`. */
+        reply: {result: GradeResult; checkResults: unknown[]; sb3: ArrayBuffer; exportId: number};
     };
     setMode: {payload: {mode: Mode}; reply: Empty};
     /**
-     * edit mode only. `saved` means the sb3 from the last exportProject (or grade) is saved. If the
-     * project changed since that export, it stays changed and the editor sends projectChanged again.
+     * edit mode only. `exportId` is the one exportProject (or grade) returned with the sb3 this save is
+     * of; one the editor never returned is refused with invalid_payload. Every export gets a new
+     * exportId, also when the project has not changed. `saved` clears the changed state only when
+     * that export is of the project as it is now; a save of an older project leaves it changed and the
+     * editor sends projectChanged again. A status for an earlier export than an earlier status is late
+     * and ignored, so saves may overlap and answer in any order. exportIds start again from 1 in each
+     * editor session (each `ready`): do not send a status for an export from before the last `ready`.
+     *
+     * The editor orders saves by exportId, not by when the site wrote them. When saves overlap, the
+     * site must not let an earlier export's sb3 replace a later one it has already stored (write one at
+     * a time in exportId order, or store only if the exportId is larger than the stored one). Otherwise
+     * the editor shows the later project as saved while the stored one is the earlier.
      */
-    setSaveStatus: {payload: {status: SaveStatus}; reply: Empty};
+    setSaveStatus: {payload: {status: SaveStatus; exportId: number}; reply: Empty};
 }
 export type SiteRequestType = keyof SiteRequests;
 
 /** Messages the editor sends on its own. `error` also answers a request, with that request's `requestId`. */
 export interface EditorEvents {
+    /** The editor has (re)loaded. A new session: exportIds start again from 1. */
     ready: Empty;
     /**
      * edit mode only. The project has changes the site has not saved. Also sent while the project is
@@ -140,7 +155,9 @@ export const validateSiteRequest = (type: SiteRequestType, payload: unknown): st
     case 'setMode':
         return includes(MODES, p.mode) ? null : `mode must be one of ${MODES.join(', ')}`;
     case 'setSaveStatus':
-        return includes(SAVE_STATUSES, p.status) ? null : `status must be one of ${SAVE_STATUSES.join(', ')}`;
+        if (!includes(SAVE_STATUSES, p.status)) return `status must be one of ${SAVE_STATUSES.join(', ')}`;
+        return Number.isInteger(p.exportId) && (p.exportId as number) >= 1
+            ? null : 'exportId must be the exportId exportProject or grade returned';
     default:
         return null;
     }

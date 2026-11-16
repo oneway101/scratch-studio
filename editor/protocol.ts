@@ -48,24 +48,26 @@ export interface SiteRequests {
     loadProject: {payload: {sb3: ArrayBuffer | null}; reply: Empty};
     /**
      * Waits for a project that is still loading. Save the sb3 from this reply, then send setSaveStatus
-     * with its `version`.
+     * with its `exportId`.
      */
-    exportProject: {payload: Empty; reply: {sb3: ArrayBuffer; version: number}};
+    exportProject: {payload: Empty; reply: {sb3: ArrayBuffer; exportId: number}};
     /** 480x360 PNG of the stage, for thumbnails. */
     captureStage: {payload: Empty; reply: {png: ArrayBuffer}};
     grade: {
         payload: {checks: Check[]};
-        /** The site may save this sb3 as it saves an exported one, with its `version`. */
-        reply: {result: GradeResult; checkResults: unknown[]; sb3: ArrayBuffer; version: number};
+        /** The site may save this sb3 as it saves an exported one, with its `exportId`. */
+        reply: {result: GradeResult; checkResults: unknown[]; sb3: ArrayBuffer; exportId: number};
     };
     setMode: {payload: {mode: Mode}; reply: Empty};
     /**
-     * edit mode only. `version` is the one exportProject (or grade) returned with the sb3 this save is
-     * of; any other version is refused with invalid_payload. `saved` clears the changed state only when that version is the current project; a save of an
-     * older version leaves it changed and the editor sends projectChanged again. A status for an older
-     * version than an earlier status is late and ignored, so saves may answer in any order.
+     * edit mode only. `exportId` is the one exportProject (or grade) returned with the sb3 this save is
+     * of; one the editor never returned is refused with invalid_payload. Every export gets a new
+     * exportId, also when the project has not changed. `saved` clears the changed state only when
+     * that export is of the project as it is now; a save of an older project leaves it changed and the
+     * editor sends projectChanged again. A status for an earlier export than an earlier status is late
+     * and ignored, so saves may overlap and answer in any order.
      */
-    setSaveStatus: {payload: {status: SaveStatus; version: number}; reply: Empty};
+    setSaveStatus: {payload: {status: SaveStatus; exportId: number}; reply: Empty};
 }
 export type SiteRequestType = keyof SiteRequests;
 
@@ -147,8 +149,8 @@ export const validateSiteRequest = (type: SiteRequestType, payload: unknown): st
         return includes(MODES, p.mode) ? null : `mode must be one of ${MODES.join(', ')}`;
     case 'setSaveStatus':
         if (!includes(SAVE_STATUSES, p.status)) return `status must be one of ${SAVE_STATUSES.join(', ')}`;
-        return Number.isInteger(p.version) && (p.version as number) >= 0
-            ? null : 'version must be the version exportProject or grade returned';
+        return Number.isInteger(p.exportId) && (p.exportId as number) >= 1
+            ? null : 'exportId must be the exportId exportProject or grade returned';
     default:
         return null;
     }

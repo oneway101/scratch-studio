@@ -28,9 +28,9 @@
   <button onclick="host.capture()">captureStage</button>
   <button onclick="host.request('grade', {checks: []})">grade (아직 없음)</button>
   <h4>저장 상태</h4>
-  <button onclick="host.request('setSaveStatus', {status: 'saving', version: host.version})">setSaveStatus: 저장 중</button>
-  <button onclick="host.request('setSaveStatus', {status: 'failed', version: host.version})">setSaveStatus: 저장 실패</button>
-  <button onclick="host.request('setSaveStatus', {status: 'saved', version: host.version})">setSaveStatus: 저장됨</button>
+  <button onclick="host.request('setSaveStatus', {status: 'saving', exportId: host.exportId})">setSaveStatus: 저장 중</button>
+  <button onclick="host.request('setSaveStatus', {status: 'failed', exportId: host.exportId})">setSaveStatus: 저장 실패</button>
+  <button onclick="host.request('setSaveStatus', {status: 'saved', exportId: host.exportId})">setSaveStatus: 저장됨</button>
   <img id="shot" style="width:100%;border:1px solid #ddd;display:none">
   <pre id="log"></pre>
 </aside>
@@ -43,8 +43,8 @@ document.getElementById('origin').textContent = location.origin;
 const logEl = document.getElementById('log');
 const describe = v => JSON.stringify(v, (k, x) => x instanceof ArrayBuffer ? `ArrayBuffer(${x.byteLength})` : x);
 const host = window.host = {
-  // version: from the last exportProject or grade reply, for the setSaveStatus buttons.
-  events: [], pending: new Map(), seq: 0, kept: null, version: 0, readyAt: null, startedAt: performance.now(),
+  // exportId: from the last exportProject or grade reply, for the setSaveStatus buttons.
+  events: [], pending: new Map(), seq: 0, kept: null, exportId: 0, readyAt: null, startedAt: performance.now(),
   log(line) { logEl.textContent = line + '\n' + logEl.textContent.slice(0, 4000); },
   // Raw post, for checks that send malformed messages.
   post(message, transfer) { frame.contentWindow.postMessage(message, EDITOR, transfer || []); },
@@ -80,7 +80,7 @@ window.addEventListener('message', event => {
     host.pending.delete(m.requestId);
     if (m.type === 'error') waiting.reject(new Error(m.payload.code + ': ' + m.payload.message));
     else {
-      if (typeof m.payload.version === 'number') host.version = m.payload.version;
+      if (typeof m.payload.exportId === 'number') host.exportId = m.payload.exportId;
       waiting.resolve(m.payload);
     }
   } else {

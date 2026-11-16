@@ -75,15 +75,21 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
     let lastChanged = store.getState().scratchGui.projectChanged;
     let loading = false; // see loadQuietly
     // Which project a save is of. editVersion goes up with every edit and whenever a project replaces
-    // the current one, so a version names one project as it was. exportProject and grade return it with
-    // the sb3, and setSaveStatus carries it back: a "saved" status clears the changed state only for the
-    // current version, so a save of an older version or another project cannot hide unsaved changes.
-    // A status is taken only for a version the site was handed an sb3 of (handedVersions), so a version
-    // the site never had cannot be marked saved. statusVersion is the newest version a status came
-    // for; a status for an older one is late.
+    // the current one, so a version names one project as it was. Every sb3 handed to the site
+    // (exportProject, grade) gets the next exportId, and the editor keeps the version it was of; the
+    // site sends the exportId back with setSaveStatus. "saved" clears the changed state only when that
+    // version is the current one, so a save of an older version or another project cannot hide unsaved
+    // changes. exportIds are handed out in order, so 1..lastExportId are exactly the ones the site got,
+    // and a status for an exportId older than the newest one a status came for (statusExportId) is late,
+    // even when two exports are of the same version.
     let editVersion = 0;
-    let statusVersion = 0;
-    const handedVersions = new Set<number>();
+    let lastExportId = 0;
+    let statusExportId = 0;
+    const exportVersions = new Map<number, number>(); // exportId -> version, from statusExportId on
+    const handOut = (version: number): number => {
+        exportVersions.set(++lastExportId, version);
+        return lastExportId;
+    };
     vm.on('PROJECT_CHANGED', () => {
         if (!loading) editVersion++;
     });
@@ -313,8 +319,7 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
         },
         exportProject: async () => {
             const {sb3, version} = await queueProject(exportSb3WithVersion);
-            handedVersions.add(version);
-            return {payload: {sb3, version}, transfer: [sb3]};
+            return {payload: {sb3, exportId: handOut(version)}, transfer: [sb3]};
         },
         captureStage: () => queueProject(() => new Promise(resolve => {
             vm.renderer.requestSnapshot(dataUri => {
@@ -325,38 +330,39 @@ export const installBridge = (vm: StudioVM, store: StudioStore): void => {
         })),
         grade: async ({checks}) => {
             // The snapshot: the project JSON and the sb3 are taken before anything awaits. The site may
-            // save this sb3, so it comes with its version like an export.
+            // save this sb3, so it comes with an exportId like an export.
             const {json, sb3, version} = await queueProject(async () => {
                 const snapshot = vm.toJSON();
                 return {json: snapshot, ...await exportSb3WithVersion()};
             });
-            handedVersions.add(version);
+            const exportId = handOut(version);
             try {
                 const {result, checkResults} = await grade(json, checks, createGradingRuntime(sb3));
-                return {payload: {result, checkResults, sb3, version}, transfer: [sb3]};
+                return {payload: {result, checkResults, sb3, exportId}, transfer: [sb3]};
             } catch (error) {
                 // A check that cannot run, or a project that will not load in the grading VM, is a
                 // grading error: the site asks the student to try again and does not count the attempt.
                 const message = error instanceof Error ? error.message : String(error);
                 const checkResults = [{type: 'error', pass: false, detail: error instanceof GraderError ? message : `grading failed: ${message}`}];
-                return {payload: {result: 'error', checkResults, sb3, version}, transfer: [sb3]};
+                return {payload: {result: 'error', checkResults, sb3, exportId}, transfer: [sb3]};
             }
         },
         setMode: async ({mode: nextMode}) => {
             applyMode(nextMode);
             return {payload: {}};
         },
-        setSaveStatus: async ({status, version}) => {
+        setSaveStatus: async ({status, exportId}) => {
             if (mode !== 'edit') throw new BridgeError('wrong_mode', `setSaveStatus in ${mode} mode`);
-            // A newer save has already answered or started: this one has nothing left to say.
-            if (version < statusVersion) return {payload: {}};
-            if (!handedVersions.has(version)) {
+            if (exportId > lastExportId) {
                 throw new BridgeError('invalid_payload',
-                    `setSaveStatus: version ${version} did not come from exportProject or grade`);
+                    `setSaveStatus: exportId ${exportId} did not come from exportProject or grade`);
             }
-            statusVersion = version;
-            // Older versions can only be late from now on, so they need not be remembered.
-            for (const handed of handedVersions) if (handed < version) handedVersions.delete(handed);
+            // A save of a later export has already answered or started: this one has nothing left to say.
+            if (exportId < statusExportId) return {payload: {}};
+            statusExportId = exportId;
+            const version = exportVersions.get(exportId) as number;
+            // Earlier exports can only be late from now on, so their versions are not needed any more.
+            for (const id of exportVersions.keys()) if (id < exportId) exportVersions.delete(id);
             setSaveState({status});
             if (status === 'saved') {
                 if (version === editVersion) store.dispatch(setProjectUnchanged());

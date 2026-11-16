@@ -86,6 +86,11 @@ const sendBytes = (type, bytes) => page.evaluate(([t, b]) => window.host.request
     [type, Array.from(bytes)]);
 const opcodes = () => vmEval(vm => Object.values(JSON.parse(vm.toJSON()).targets.find(t => !t.isStage).blocks)
     .map(b => b.opcode));
+// The site saves an sb3 with the version exportProject (or grade) returned with it.
+const exportVersion = async () => (await request('exportProject')).version;
+const setSaveStatus = (status, version) => request('setSaveStatus', {status, version});
+// Saves the project as it is now, as the site does after an edit.
+const markSaved = async () => setSaveStatus('saved', await exportVersion());
 
 await attempt('01 다른 출처의 iframe에서 ready 수신', async () => {
     const readyMs = await page.evaluate(() => Math.round(window.host.readyAt));
@@ -105,6 +110,8 @@ await attempt('03 잘못된 메시지에는 error 응답 (payload, version, type
     const badLocale = await requestError('init', {locale: 'ja', mode: 'edit'});
     const badMode = await requestError('setMode', {mode: 'teacher'});
     const badSb3 = await requestError('loadProject', {sb3: 'not a buffer'});
+    const noSaveVersion = await requestError('setSaveStatus', {status: 'saved'});
+    const unexportedVersion = await requestError('setSaveStatus', {status: 'saved', version: 1e9});
     const unknownType = await requestError('ready');
     const badVersion = await page.evaluate(() => new Promise(resolve => {
         const listener = e => {
@@ -116,10 +123,12 @@ await attempt('03 잘못된 메시지에는 error 응답 (payload, version, type
         addEventListener('message', listener);
         window.host.post({source: 'scratch-studio', version: 9, type: 'init', requestId: 'v9', payload: {}});
     }));
-    assert([badLocale, badMode, badSb3].every(m => /^invalid_payload/.test(m)), 'invalid payload accepted');
+    assert([badLocale, badMode, badSb3, noSaveVersion, unexportedVersion].every(m => /^invalid_payload/.test(m)),
+        'invalid payload accepted');
     assert(/^unknown_type/.test(unknownType), unknownType);
     assert(badVersion.type === 'error' && badVersion.payload.code === 'unsupported_version', 'bad version');
-    return {badLocale, badMode, badSb3, unknownType, badVersion: badVersion.payload.code};
+    return {badLocale, badMode, badSb3, noSaveVersion, unexportedVersion, unknownType,
+        badVersion: badVersion.payload.code};
 });
 
 let original;
@@ -165,7 +174,7 @@ await attempt('07 projectChanged: edit 모드에서만 알림', async () => {
     await page.waitForFunction(() => window.host.events.some(e => e.type === 'projectChanged'), null, {timeout: 5000});
     const counts = {edit: (await eventsOf('projectChanged')).length};
     for (const mode of ['player', 'view']) {
-        await request('setSaveStatus', {status: 'saved'}).catch(() => {});
+        await markSaved().catch(() => {});
         await request('setMode', {mode});
         await editor.evaluate(() => window.ReduxStore.dispatch({type: 'scratch-gui/project-changed/SET_PROJECT_CHANGED', changed: false}));
         await clearEvents();
@@ -174,7 +183,7 @@ await attempt('07 projectChanged: edit 모드에서만 알림', async () => {
         counts[mode] = (await eventsOf('projectChanged')).length;
     }
     await request('setMode', {mode: 'edit'});
-    await request('setSaveStatus', {status: 'saved'});
+    await markSaved();
     assert(counts.edit >= 1 && counts.player === 0 && counts.view === 0, JSON.stringify(counts));
     return counts;
 });
@@ -225,18 +234,19 @@ await attempt('10 저장 버튼: saveRequested / setSaveStatus, edit 모드에�
     await clearEvents();
     await editor.click('[data-studio=save-button]');
     await page.waitForFunction(() => window.host.events.some(e => e.type === 'saveRequested'), null, {timeout: 5000});
-    await request('setSaveStatus', {status: 'saving'});
+    const version = await exportVersion();
+    await setSaveStatus('saving', version);
     const saving = await read();
-    await request('setSaveStatus', {status: 'failed'});
+    await setSaveStatus('failed', version);
     const failed = await read();
     await clearEvents();
     await editor.click('[data-studio=save-retry]');
     await page.waitForFunction(() => window.host.events.some(e => e.type === 'saveRequested'), null, {timeout: 5000});
-    await request('setSaveStatus', {status: 'saved'});
+    await markSaved();
     const saved = await read();
     await page.screenshot({path: path.join(out, 'mode-edit.png')});
     await request('setMode', {mode: 'view'});
-    const inView = await requestError('setSaveStatus', {status: 'saving'});
+    const inView = await requestError('setSaveStatus', {status: 'saving', version});
     await request('setMode', {mode: 'edit'});
     assert(saving.disabled && failed.retry === 1 && saved.retry === 0 && !saved.disabled, 'save ui state wrong');
     assert(/^wrong_mode/.test(inView), inView);
@@ -458,7 +468,7 @@ await attempt('20 작품 파일 불러오기: 파일 메뉴와 끌어다 놓기,
     } finally {
         page.off('dialog', onDialog);
         await reset();
-        await request('setSaveStatus', {status: 'saved'});
+        await markSaved();
     }
 });
 
@@ -498,7 +508,7 @@ await attempt('21 컴퓨터에 저장하기: 파일 메뉴로 sb3 다운로드, 
     } finally {
         page.off('dialog', onDialog);
         await sendBytes('loadProject', sample);
-        await request('setSaveStatus', {status: 'saved'});
+        await markSaved();
     }
 });
 
@@ -521,7 +531,7 @@ const withFileDialogs = async fn => {
     } finally {
         page.off('dialog', onDialog);
         await sendBytes('loadProject', fs.readFileSync(path.join(out, 'sample.sb3')));
-        await request('setSaveStatus', {status: 'saved'});
+        await markSaved();
     }
 };
 const spriteX = () => vmEval(vm => vm.runtime.targets.find(t => t.isOriginal && !t.isStage).x);
@@ -751,8 +761,8 @@ await attempt('27 바뀐 작품을 파일로 바꿔도 projectChanged, 이전 �
         await clearEvents();
         await vmEval(vm => vm.runtime.emitProjectChanged());
         await page.waitForFunction(() => window.host.events.some(e => e.type === 'projectChanged'), null, {timeout: 5000});
-        await request('exportProject');
-        await request('setSaveStatus', {status: 'saving'});
+        const older = await exportVersion();
+        await setSaveStatus('saving', older);
         // The student opens a file before that save is done.
         await clearEvents();
         await pick('moved.sb3', moved);
@@ -761,12 +771,11 @@ await attempt('27 바뀐 작품을 파일로 바꿔도 projectChanged, 이전 �
             x: await spriteX()};
         // The older save finishes.
         await clearEvents();
-        await request('setSaveStatus', {status: 'saved'});
+        await setSaveStatus('saved', older);
         await page.waitForTimeout(300);
         const staleSaved = {changed: await projectChangedState(), events: (await eventsOf('projectChanged')).length};
         // The site saves again, this time the file's project.
-        await request('exportProject');
-        await request('setSaveStatus', {status: 'saved'});
+        await markSaved();
         const saved = {changed: await projectChangedState()};
         assert(replaced.events === 1 && replaced.changed && replaced.x === 123, `replaced: ${JSON.stringify(replaced)}`);
         assert(staleSaved.changed === true && staleSaved.events === 1, `stale saved: ${JSON.stringify(staleSaved)}`);
@@ -805,10 +814,82 @@ await attempt('28 사이트가 작품을 여는 도중 컴퓨터에 저장하면
     });
 });
 
+await attempt('29 저장 응답은 그 저장의 버전에만 적용: 저장 중 채점, 순서가 바뀐 응답', async () => {
+    const sample = fs.readFileSync(path.join(out, 'sample.sb3'));
+    const moved = await editProject(sample, project => {
+        project.targets.find(t => !t.isStage).x = 123;
+    });
+    const edit = async () => {
+        await vmEval(vm => vm.runtime.emitProjectChanged());
+        await page.waitForTimeout(100);
+    };
+    const status = () => editor.evaluate(() => document.querySelector('[data-studio=save-status]').textContent);
+    const state = async () => ({changed: await projectChangedState(), events: (await eventsOf('projectChanged')).length,
+        status: await status()});
+    return withFileDialogs(async pick => {
+        // Project A is edited and the site starts saving it; the answer is held back.
+        await sendBytes('loadProject', sample);
+        await edit();
+        const a = await exportVersion();
+        await setSaveStatus('saving', a);
+        // The student opens project B from a file and grades it, which also hands the site an sb3.
+        await pick('moved.sb3', moved);
+        await page.waitForTimeout(1500);
+        const graded = await page.evaluate(() => window.host.request('grade', {checks: []})
+            .then(r => ({result: r.result, version: r.version})));
+        // A's save finishes: B was never saved, so it stays changed and the site hears about it again.
+        await clearEvents();
+        await setSaveStatus('saved', a);
+        await page.waitForTimeout(300);
+        const afterA = await state();
+        // The site saves the sb3 it got from grading, which is B as it is now.
+        await clearEvents();
+        await setSaveStatus('saved', graded.version);
+        const afterGraded = await state();
+
+        // Two saves overlap and the older one answers last.
+        await edit();
+        const b1 = await exportVersion();
+        await setSaveStatus('saving', b1);
+        await edit();
+        const b2 = await exportVersion();
+        await setSaveStatus('saving', b2);
+        await setSaveStatus('saved', b2);
+        await clearEvents();
+        await setSaveStatus('saved', b1);
+        await page.waitForTimeout(300);
+        const lateOlder = await state();
+
+        // Two saves overlap and the older one answers first, while the newer one is still saving.
+        await edit();
+        const c1 = await exportVersion();
+        await setSaveStatus('saving', c1);
+        await edit();
+        const c2 = await exportVersion();
+        await setSaveStatus('saving', c2);
+        await clearEvents();
+        await setSaveStatus('saved', c1);
+        await page.waitForTimeout(300);
+        const earlyOlder = await state();
+        await setSaveStatus('saved', c2);
+        const newerSaved = await state();
+
+        assert(graded.result === 'pass' && graded.version > a, `graded: ${JSON.stringify(graded)}`);
+        assert(afterA.changed === true && afterA.events === 1, `after A saved: ${JSON.stringify(afterA)}`);
+        assert(afterGraded.changed === false && afterGraded.status === '저장됨', `after graded saved: ${JSON.stringify(afterGraded)}`);
+        assert(b2 > b1 && lateOlder.changed === false && lateOlder.events === 0 && lateOlder.status === '저장됨',
+            `late older saved: ${JSON.stringify(lateOlder)}`);
+        assert(c2 > c1 && earlyOlder.changed === true && earlyOlder.events === 0 && earlyOlder.status === '저장 중',
+            `early older saved: ${JSON.stringify(earlyOlder)}`);
+        assert(newerSaved.changed === false && newerSaved.status === '저장됨', `newer saved: ${JSON.stringify(newerSaved)}`);
+        return {versions: {a, graded: graded.version, b1, b2, c1, c2}, afterA, afterGraded, lateOlder, earlyOlder, newerSaved};
+    });
+});
+
 await page.close();
 
 // Origin checks need pages on the origin that is not allowed.
-await attempt('29 허용되지 않은 출처에서는 임베드 자체가 막힘 (frame-ancestors)', async () => {
+await attempt('30 허용되지 않은 출처에서는 임베드 자체가 막힘 (frame-ancestors)', async () => {
     const bad = await context.newPage();
     await bad.goto('http://localhost:8603/');
     await bad.waitForTimeout(5000);
@@ -819,7 +900,7 @@ await attempt('29 허용되지 않은 출처에서는 임베드 자체가 막힘
     return {frames};
 });
 
-await attempt('30 허용되지 않은 출처의 메시지는 무시됨 (헤더 없이도)', async () => {
+await attempt('31 허용되지 않은 출처의 메시지는 무시됨 (헤더 없이도)', async () => {
     const bad = await context.newPage();
     await bad.goto('http://localhost:8603/?editor=http://localhost:8604');
     const frame = () => bad.frames().find(f => f.url().startsWith('http://localhost:8604'));

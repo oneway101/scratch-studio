@@ -28,9 +28,9 @@
   <button onclick="host.capture()">captureStage</button>
   <button onclick="host.request('grade', {checks: []})">grade (아직 없음)</button>
   <h4>저장 상태</h4>
-  <button onclick="host.request('setSaveStatus', {status: 'saving'})">setSaveStatus: 저장 중</button>
-  <button onclick="host.request('setSaveStatus', {status: 'failed'})">setSaveStatus: 저장 실패</button>
-  <button onclick="host.request('setSaveStatus', {status: 'saved'})">setSaveStatus: 저장됨</button>
+  <button onclick="host.request('setSaveStatus', {status: 'saving', version: host.version})">setSaveStatus: 저장 중</button>
+  <button onclick="host.request('setSaveStatus', {status: 'failed', version: host.version})">setSaveStatus: 저장 실패</button>
+  <button onclick="host.request('setSaveStatus', {status: 'saved', version: host.version})">setSaveStatus: 저장됨</button>
   <img id="shot" style="width:100%;border:1px solid #ddd;display:none">
   <pre id="log"></pre>
 </aside>
@@ -43,7 +43,8 @@ document.getElementById('origin').textContent = location.origin;
 const logEl = document.getElementById('log');
 const describe = v => JSON.stringify(v, (k, x) => x instanceof ArrayBuffer ? `ArrayBuffer(${x.byteLength})` : x);
 const host = window.host = {
-  events: [], pending: new Map(), seq: 0, kept: null, readyAt: null, startedAt: performance.now(),
+  // version: from the last exportProject or grade reply, for the setSaveStatus buttons.
+  events: [], pending: new Map(), seq: 0, kept: null, version: 0, readyAt: null, startedAt: performance.now(),
   log(line) { logEl.textContent = line + '\n' + logEl.textContent.slice(0, 4000); },
   // Raw post, for checks that send malformed messages.
   post(message, transfer) { frame.contentWindow.postMessage(message, EDITOR, transfer || []); },
@@ -54,7 +55,7 @@ const host = window.host = {
       const timer = setTimeout(() => { host.pending.delete(requestId); reject(new Error('timeout: ' + type)); }, timeoutMs);
       host.pending.set(requestId, {resolve, reject, timer});
       host.log(`→ ${type} ${describe(payload || {})}`);
-      host.post({source: 'scratch-studio', version: 1, type, requestId, payload: payload || {}}, transfer);
+      host.post({source: 'scratch-studio', version: 2, type, requestId, payload: payload || {}}, transfer);
     });
   },
   async exportAndKeep() { const r = await host.request('exportProject'); host.kept = r.sb3; return r.sb3.byteLength; },
@@ -78,7 +79,10 @@ window.addEventListener('message', event => {
     clearTimeout(waiting.timer);
     host.pending.delete(m.requestId);
     if (m.type === 'error') waiting.reject(new Error(m.payload.code + ': ' + m.payload.message));
-    else waiting.resolve(m.payload);
+    else {
+      if (typeof m.payload.version === 'number') host.version = m.payload.version;
+      waiting.resolve(m.payload);
+    }
   } else {
     host.events.push({type: m.type, payload: m.payload, requestId: m.requestId});
   }

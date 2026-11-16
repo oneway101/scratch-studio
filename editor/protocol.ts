@@ -3,7 +3,7 @@
 // as they are; changing a message means bumping VERSION.
 
 export const SOURCE = 'scratch-studio';
-export const VERSION = 1;
+export const VERSION = 2;
 
 export const LOCALES = ['ko', 'en'] as const;
 export type Locale = typeof LOCALES[number];
@@ -46,20 +46,26 @@ export interface SiteRequests {
     init: {payload: {locale: Locale; mode: Mode}; reply: Empty};
     /** `sb3: null` opens an empty project. */
     loadProject: {payload: {sb3: ArrayBuffer | null}; reply: Empty};
-    /** Waits for a project that is still loading. Save the sb3 from this reply, then send setSaveStatus. */
-    exportProject: {payload: Empty; reply: {sb3: ArrayBuffer}};
+    /**
+     * Waits for a project that is still loading. Save the sb3 from this reply, then send setSaveStatus
+     * with its `version`.
+     */
+    exportProject: {payload: Empty; reply: {sb3: ArrayBuffer; version: number}};
     /** 480x360 PNG of the stage, for thumbnails. */
     captureStage: {payload: Empty; reply: {png: ArrayBuffer}};
     grade: {
         payload: {checks: Check[]};
-        reply: {result: GradeResult; checkResults: unknown[]; sb3: ArrayBuffer};
+        /** The site may save this sb3 as it saves an exported one, with its `version`. */
+        reply: {result: GradeResult; checkResults: unknown[]; sb3: ArrayBuffer; version: number};
     };
     setMode: {payload: {mode: Mode}; reply: Empty};
     /**
-     * edit mode only. `saved` means the sb3 from the last exportProject (or grade) is saved. If the
-     * project changed since that export, it stays changed and the editor sends projectChanged again.
+     * edit mode only. `version` is the one exportProject (or grade) returned with the sb3 this save is
+     * of. `saved` clears the changed state only when that version is the current project; a save of an
+     * older version leaves it changed and the editor sends projectChanged again. A status for an older
+     * version than an earlier status is late and ignored, so saves may answer in any order.
      */
-    setSaveStatus: {payload: {status: SaveStatus}; reply: Empty};
+    setSaveStatus: {payload: {status: SaveStatus; version: number}; reply: Empty};
 }
 export type SiteRequestType = keyof SiteRequests;
 
@@ -140,7 +146,9 @@ export const validateSiteRequest = (type: SiteRequestType, payload: unknown): st
     case 'setMode':
         return includes(MODES, p.mode) ? null : `mode must be one of ${MODES.join(', ')}`;
     case 'setSaveStatus':
-        return includes(SAVE_STATUSES, p.status) ? null : `status must be one of ${SAVE_STATUSES.join(', ')}`;
+        if (!includes(SAVE_STATUSES, p.status)) return `status must be one of ${SAVE_STATUSES.join(', ')}`;
+        return Number.isInteger(p.version) && (p.version as number) >= 0
+            ? null : 'version must be the version exportProject or grade returned';
     default:
         return null;
     }
